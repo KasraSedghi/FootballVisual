@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { analysePassingLanes, interceptionMargin, scoreLane } from "./lanes";
+import { analysePassingLanes, attackingGoalX, interceptionMargin, scoreLane } from "./lanes";
 import { DEFAULT_MOTION, type PassingLane, type PlayerState } from "./types";
 
 function player(id: number, x: number, y: number, team: PlayerState["team"] = "team_a"): PlayerState {
@@ -188,5 +188,29 @@ describe("scoreLane", () => {
     const score = scoreLane(extreme);
     expect(score).toBeGreaterThanOrEqual(0);
     expect(score).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("attackingGoalX", () => {
+  const defenders = [-10, -5, 0, 5, 10].map((y, i) => player(20 + i, 38, y, "team_b"));
+  const attackers = [-10, -5, 0, 5, 10].map((y, i) => player(i, 10, y, "team_a"));
+
+  it("points at the goal the defenders are protecting", () => {
+    expect(attackingGoalX(attackers, defenders)).toBe(52.5);
+    expect(attackingGoalX(defenders, attackers)).toBe(-52.5);
+  });
+
+  it("is not inverted by a single defender caught upfield", () => {
+    // Regression: with a mean, one defender stranded deep in the other half
+    // drags the average past the attackers and flips the pitch, so every
+    // forward pass is then reported as losing ground. Found by dragging a
+    // defender across the halfway line in the sandbox.
+    const strayed = [...defenders, player(99, -50, 0, "team_b")];
+    expect(attackingGoalX(attackers, strayed)).toBe(52.5);
+  });
+
+  it("falls back to a definite answer when the teams overlap exactly", () => {
+    const overlapping = attackers.map((p) => ({ ...p, team: "team_b" as const }));
+    expect(Math.abs(attackingGoalX(attackers, overlapping))).toBe(52.5);
   });
 });

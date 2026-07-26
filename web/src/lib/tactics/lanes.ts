@@ -104,13 +104,32 @@ export function interceptionMargin(
   return { marginS: worst, atDistanceM: worstAt };
 }
 
-/** Which goal a team attacks, as a pitch x coordinate. */
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Which goal a team attacks, as a pitch x coordinate.
+ *
+ * Decided by comparing the two teams' median x, not their mean. The mean lets a
+ * single player invert the answer: one defender caught upfield, one tracking
+ * error, or one player dragged across the halfway line in the sandbox is enough
+ * to swing a ten-player average past the other team's. When that happens the
+ * engine silently decides the wrong goal is being attacked, and every forward
+ * pass is then reported as losing ground, which is a confusing failure because
+ * the lane verdicts stay correct while the progression numbers all flip sign.
+ * A median shrugs that off.
+ */
 export function attackingGoalX(attackers: PlayerState[], defenders: PlayerState[]): number {
   if (!attackers.length || !defenders.length) return 52.5;
-  const attackMean = attackers.reduce((a, p) => a + p.x, 0) / attackers.length;
-  const defendMean = defenders.reduce((a, p) => a + p.x, 0) / defenders.length;
+  const attackMid = median(attackers.map((p) => p.x));
+  const defendMid = median(defenders.map((p) => p.x));
+  if (attackMid === defendMid) return 52.5;
   // Whichever end the defenders sit closer to is the end being attacked.
-  return defendMean > attackMean ? 52.5 : -52.5;
+  return defendMid > attackMid ? 52.5 : -52.5;
 }
 
 function verdictFor(marginS: number): LaneVerdict {
