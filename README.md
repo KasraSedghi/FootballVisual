@@ -121,25 +121,37 @@ The synthetic clip knows where every player really was, so the pipeline can be s
 rather than demoed. `make demo` prints this:
 
 ```
-position MAE          1.29 m
-position p95          2.01 m
-detection coverage    72.6%   (21 of 21 players matched by some track)
+position MAE          0.80 m
+position p95          1.76 m
+detection coverage    74.6%   (21 of 21 players matched by some track)
 identity switches     7
 team assignment       100.0%
-ball coverage         96.4%
-ball MAE              3.06 m
+ball coverage         99.2%
+ball MAE              3.11 m
 ```
 
 How to read these:
 
-- **Position MAE 1.29 m** bounds everything above it. A passing-lane margin that turns on
+- **Position MAE 0.80 m** bounds everything above it. A passing-lane margin that turns on
   distances finer than about a metre is noise, which is why the verdict thresholds are set
   in *seconds* rather than centimetres.
-- **Coverage 72.6%** counts frames, not players. Every one of the 21 on-screen players is
+- **Coverage 74.6%** counts frames, not players. Every one of the 21 on-screen players is
   followed by a track; the shortfall is frames where a player is missed and their track is
   coasting on prediction.
 - **7 identity switches** over 250 frames. Each one corrupts a trajectory from that point
   on, so this is the number to watch when tuning.
+- **Ball MAE 3.11 m** is the weakest number here and is not a smoothing problem. Widening
+  the smoothing window from 1 to 21 frames moves it by 0.01 m, which means the error is
+  correlated over time rather than random jitter. Splitting it by whether the ball is on
+  the ground or in flight gives 2.96 m against 3.26 m, so height is not the driver either.
+  What is left is that the ball is a handful of pixels, and in the depth direction a pixel
+  of localisation error is metres of pitch (its error has a standard deviation of 4.3 m
+  across the pitch against 2.1 m along it).
+
+Calibrating from the markings rather than from clicked landmarks is what moved position
+MAE from 1.29 m to 0.80 m. That is not surprising in hindsight: the landmark path
+simulates a human clicking with two pixels of error, and a line fit over hundreds of pixels
+of evidence beats that. Run `make track-manual` to reproduce the clicked-landmark numbers.
 
 Run `make evaluate` to re-score an existing `tracks.json`.
 
@@ -188,19 +200,111 @@ web/src/
   app/api/analyse route handler: Claude narration + deterministic fallback
 ```
 
+## Automatic calibration
+
+Calibration can run from the pitch markings alone, with nobody clicking anything:
+
+```bash
+python -m footballvisual track --video match.mp4 --auto-calibrate --camera-side minus_y
+```
+
+The hard part is not finding the lines, it is deciding *which* line each one is. A wrong
+assignment still produces a perfectly self-consistent homography that puts every player in
+the wrong half. So the approach is hypothesis and verify: group the detected lines into
+their two vanishing-point families, enumerate assignments to model lines, solve from four
+intersections, and score each candidate by reprojecting the *whole* pitch model against a
+distance transform of the detected lines. A wrong assignment explains the four lines it
+was fitted to and then puts the centre circle nowhere, so it scores badly.
+
+Measured against the renderer's known homography, this recovers the camera to **0.05m**
+mean pitch error in about 9 seconds per frame on CPU.
+
+### The symmetry problem, which is not solvable from geometry
+
+A pitch is symmetric, and no amount of line finding escapes that:
+
+- **Mirrored about the halfway line.** Explains the markings exactly as well as the truth
+  while putting every player on the wrong side. Resolved by `--camera-side`, since knowing
+  which touchline the camera is behind fixes the orientation. This is a required argument
+  rather than an inferred one because it *cannot* be inferred.
+- **Rotated 180 degrees.** Also maps every marking onto a marking, and unlike the mirror it
+  preserves orientation, so the camera side does not settle it. The two fits score
+  identically by construction.
+
+The rotation is reported via `rotation_ambiguous` rather than guessed at. Passing a
+`prior_h` resolves it, which is what makes re-calibration after a camera cut usable: settle
+it once, then carry it across cuts. With a prior, every frame of the demo clip calibrates
+to within 0.33m.
+
+Getting the orientation sign backwards is a genuinely nasty bug, because it fails
+silently: the mirrored homography reprojects onto the real markings perfectly. It cost a
+debugging session here and is pinned by `test_camera_side_is_required_to_resolve_the_mirror`.
+
+## Camera cuts
+
+A cut invalidates the running homography completely, and it does so quietly: optical flow
+between two unrelated shots still returns matches, RANSAC still fits a homography to them,
+and that transform gets composed onto the running estimate. Every player is then projected
+somewhere confidently wrong with nothing in the output indicating a problem.
+
+Cuts are detected by the correlation between consecutive frames' colour histograms.
+Histograms, not pixel differences, precisely because they ignore *where* things are: a hard
+pan moves every pixel and would read as a cut to a pixel-difference test, while barely
+moving the histogram. On the demo clip, which contains no cuts, the minimum correlation
+across a full pan is 0.93 against a 0.55 threshold.
+
+On a detected cut the pipeline re-calibrates from the markings, seeded with the last good
+homography to settle the rotation ambiguity, rather than propagating across the cut.
+
 ## Known limits
 
-- **Calibration is seeded from named landmarks**, either a config file or, for the
-  synthetic clip, ground truth plus click noise. Fully automatic pitch-line detection is
-  not implemented; identifying *which* line is which robustly is its own project.
-- **No camera-cut detection.** A hard cut breaks homography propagation, and the demo clip
-  is a single continuous shot.
+- **The 180 degree rotation ambiguity needs external information.** Line markings do not
+  encode which end is which. The pipeline resolves it from a prior; a real deployment would
+  resolve it from the direction of play or an operator confirming it once at kickoff.
 - **The ball is only tracked in 2D.** Height is not recovered, so a lofted pass is
   reported at its ground projection.
-- **Two teams only.** Referees and keepers land in an "other" bucket rather than being
-  identified as such.
-- **Tiled inference costs one forward pass per tile**, roughly 0.5s per frame on CPU. Fine
-  for offline analysis, not real time.
+- **Goalkeeper and referee separation is positional**, so it needs enough of a trajectory
+  to judge. Tracks with under 8 observations are left `unknown` rather than guessed, since
+  mislabelling a defender as a keeper would move the offside line.
+- **Not real time.** See the throughput table below. Fine for offline analysis.
+- **Never validated on real broadcast footage.** Every number here is measured on the
+  synthetic clip, which has no shadows, no crowd, no motion blur beyond what is added, and
+  no broadcast graphics. Treat the accuracy figures as characterising the pipeline on a
+  controlled input, not as a claim about real matches.
+
+## Throughput
+
+Measured on this container's CPU (4 threads, no GPU), 1280x720 input, averaged over
+8 frames after a warm-up:
+
+| Stage | Cost | Note |
+|---|---|---|
+| Player detection, tiled 2x2 @1280 | 522 ms/frame | the default |
+| Player detection, full frame @1280 | 149 ms/frame | 3.5x faster, recall 0.90 to 0.86 |
+| Player detection, tiled 2x2 @960 | 293 ms/frame | middle option |
+| Ball detection (classical) | 2.5 ms/frame | negligible |
+| Homography flow step | 15.2 ms/frame | negligible |
+| Automatic calibration | ~9 s/attempt | frame zero, and after each cut |
+
+Detection dominates completely: everything else together is under 4% of a frame's cost.
+So the only lever that matters is how much detector you buy, and tiling is the knob:
+
+```bash
+# Fastest, at a few points of recall on distant players
+python -m footballvisual track --video match.mp4 --tile-rows 1 --tile-cols 1
+
+# Middle ground
+python -m footballvisual track --video match.mp4 --imgsz 960
+```
+
+Tiling costs 3.5x for about 4 percentage points of recall. That is worth it here because
+a missed distant player is a missing member of the defensive block, and block shape is
+what the tactical layer is measuring. On a workload that only cared about the ball and the
+players near it, it would not be.
+
+The honest summary is that a real-time version of this is a different engineering problem,
+not a tuning exercise: it needs a GPU, batched tiles in one forward pass, and a smaller
+model, and none of those are things this project has measured.
 
 ## Tests
 

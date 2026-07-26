@@ -45,7 +45,14 @@ class Detection:
 
     @property
     def foot_point(self) -> tuple[float, float]:
-        """Bottom-centre: where the player meets the ground plane."""
+        """Bottom-centre: where the object meets the ground plane.
+
+        Correct for the ball as well as for players, and for the same reason.
+        The homography maps the ground plane, so the point to project is where
+        the object touches it. Projecting a ball's bbox *centre* treats a point
+        one ball-radius up in the air as if it were on the grass, and at
+        broadcast depth that reprojects metres up the pitch.
+        """
         x1, _, x2, y2 = self.bbox
         return ((x1 + x2) / 2.0, y2)
 

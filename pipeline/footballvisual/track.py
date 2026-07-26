@@ -365,7 +365,12 @@ class BallTracker:
 
     def update(self, detection: Detection | None) -> tuple[float, float] | None:
         if detection is not None:
-            measured = np.array(detection.centre, dtype=np.float64)
+            # The ball's ground contact point, not its centre. The homography
+            # maps the ground plane, so projecting the centre of a sphere is the
+            # same mistake as projecting the centre of a player's bounding box,
+            # and it biases the result the same way: up the pitch, growing with
+            # distance from the camera.
+            measured = np.array(detection.foot_point, dtype=np.float64)
             if self.position is None:
                 self.position = measured
                 self.velocity = np.zeros(2)

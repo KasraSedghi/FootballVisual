@@ -11,7 +11,7 @@ DATA    := data
 SPRITES := assets/sprites
 export YOLO_CONFIG_DIR := /tmp/Ultralytics
 
-.PHONY: help venv sprites render track evaluate demo test test-py test-web web clean
+.PHONY: help venv sprites render track track-manual evaluate demo test test-py test-web web clean
 
 help:
 	@echo "make demo      full pipeline: sprites, render, track, evaluate"
@@ -30,7 +30,19 @@ sprites: venv
 render: venv
 	$(PY) -m footballvisual render --out $(DATA) --sprites $(SPRITES)
 
+# Calibrates from the pitch markings, so nothing has to be clicked first.
+# --camera-side resolves the pitch's mirror symmetry, which cannot be inferred
+# from the image; the renderer puts the camera on the negative-y touchline.
 track: venv
+	$(PY) -m footballvisual track \
+		--video $(DATA)/broadcast.mp4 \
+		--out $(DATA)/tracks.json \
+		--ground-truth $(DATA)/ground_truth.json \
+		--auto-calibrate --camera-side minus_y
+
+# The original path, for comparison: a homography seeded from clicked pitch
+# landmarks rather than found automatically.
+track-manual: venv
 	$(PY) -m footballvisual track \
 		--video $(DATA)/broadcast.mp4 \
 		--out $(DATA)/tracks.json \

@@ -27,6 +27,29 @@ it to the engine with tests, then expose it through `reportFacts()`. The determi
 fallback in the same route must stay genuinely useful, not a stub: it is what runs when
 no `ANTHROPIC_API_KEY` is set, which is the default.
 
+## The three symmetries of a pitch
+
+Automatic calibration (`autocalibrate.py`) exists now, and the thing to understand before
+touching it is that a pitch is symmetric, so its markings under-determine the homography.
+
+* **Mirror about the halfway line.** Explains the image exactly as well as the truth,
+  with every player on the wrong side. Fixed by `camera_side`, which is a required
+  argument because it cannot be inferred from the image.
+* **180 degree rotation.** Also maps markings onto markings and *preserves orientation*,
+  so `camera_side` does not help. Reported through `rotation_ambiguous` and resolved only
+  by a `prior_h`, never guessed.
+
+The orientation check in `_plausible` encodes the first of these. Image y points down, so
+the correct homography yields a **negative** shoelace area for the projected pitch
+corners. Getting that sign backwards does not fail loudly, it silently selects the
+mirrored pitch, which reprojects onto the real lines perfectly. That bug cost a debugging
+session and is pinned by `test_camera_side_is_required_to_resolve_the_mirror`.
+
+Line families must be grouped by **vanishing point, not by angle**. Perspective makes
+lines that are parallel on the grass span tens of degrees in the image, with members of
+the other family sitting between them, so an angle split fails on exactly the wide views
+where calibration matters.
+
 ## Non-obvious decisions, and why
 
 Changing any of these without understanding the reason will regress something measurable.
@@ -56,6 +79,20 @@ Changing any of these without understanding the reason will regress something me
   a different set of players.
 - **Space control uses a soft logistic on time-to-arrive, not a Voronoi.** A hard nearest
   player rule draws a confident border between two players a tenth of a second apart.
+- **Cuts are detected on colour histograms, not pixel differences.** A hard pan moves
+  every pixel and reads as a cut to a pixel test, while barely moving the histogram.
+  Propagating a homography across a cut fails silently: flow still matches, RANSAC still
+  fits, and every player lands somewhere confidently wrong.
+- **Keepers and referees are separated by position, not colour.** Both wear kit unlike
+  either team, which is exactly why colour puts them in the same bucket. A keeper's x is
+  extreme and its range small; a referee roams. This runs after projection because it
+  needs pitch coordinates.
+- **Keepers are excluded from both squads in the tactical engine.** One keeper in the
+  defending set stretches measured block depth by the 40m they stand behind the line, and
+  puts a goalkeeper in the list of passing options.
+- **Automatic calibration is throttled** (`calibration_retry_frames`). Each attempt costs
+  seconds, so retrying every frame on a clip it cannot solve turns a failure into an
+  apparent hang.
 
 ## Conventions
 
