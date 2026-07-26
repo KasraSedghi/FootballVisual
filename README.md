@@ -140,13 +140,20 @@ How to read these:
   coasting on prediction.
 - **7 identity switches** over 250 frames. Each one corrupts a trajectory from that point
   on, so this is the number to watch when tuning.
-- **Ball MAE 3.11 m** is the weakest number here and is not a smoothing problem. Widening
-  the smoothing window from 1 to 21 frames moves it by 0.01 m, which means the error is
-  correlated over time rather than random jitter. Splitting it by whether the ball is on
-  the ground or in flight gives 2.96 m against 3.26 m, so height is not the driver either.
-  What is left is that the ball is a handful of pixels, and in the depth direction a pixel
-  of localisation error is metres of pitch (its error has a standard deviation of 4.3 m
-  across the pitch against 2.1 m along it).
+- **Ball MAE 1.89 m** is still the weakest number here, and it took three attempts to
+  find out why, which is worth recording because two of them were wrong.
+
+  Smoothing was not the cause: widening the window from 1 to 21 frames moved the error by
+  0.01 m, so it was not random jitter. Ball height was not the cause either: in flight
+  versus on the ground was 3.26 m against 2.96 m. What finally showed it was looking at
+  the distribution instead of the mean. It was bimodal, a 1.8 m median and a 5.1 m 90th
+  percentile, then a jump to 15.6 m at the 95th. About one frame in ten had locked onto
+  the wrong white blob entirely.
+
+  The cause was the motion gate, which allowed the ball to jump 220 pixels between
+  frames when a driven pass moves it about 0.64 m, a few tens of pixels at this scale.
+  Tightening it and scaling it with time-since-last-seen took ball error from 3.11 m to
+  1.89 m and coverage to 100%.
 
 Calibrating from the markings rather than from clicked landmarks is what moved position
 MAE from 1.29 m to 0.80 m. That is not surprising in hindsight: the landmark path
