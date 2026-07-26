@@ -204,3 +204,30 @@ def test_a_keeper_at_the_other_end_is_still_a_keeper():
     keeper = [(-49.0 + 0.4 * np.sin(i / 3.0), 1.5 * np.sin(i / 4.0)) for i in range(40)]
     result = classify_officials(candidate_ids={3}, trajectories={3: keeper})
     assert result.role_of(3) == "keeper"
+
+
+def test_ball_jump_gate_scales_with_time_unseen():
+    """A gate that ignores elapsed time is wrong in both directions.
+
+    Fixed too loose, it accepts any white blob on the pitch as the ball on the
+    very next frame. Fixed too tight, it refuses a legitimate re-acquisition
+    after the ball has been occluded for half a second, during which it really
+    can have travelled a long way.
+    """
+    ball = BallTracker(max_jump_px=50.0, max_coast=12)
+    ball.update(Detection((100.0, 100.0, 104.0, 104.0), 0.9, kind="ball"))
+    ball.update(Detection((110.0, 100.0, 114.0, 104.0), 0.9, kind="ball"))
+
+    # Immediately: a 300px jump is not this ball.
+    far = ball.update(Detection((410.0, 100.0, 414.0, 104.0), 0.9, kind="ball"))
+    assert far is not None and far[0] < 200.0, "a huge one-frame jump must be rejected"
+
+    # After several missed frames the same jump is plausible again.
+    patient = BallTracker(max_jump_px=50.0, max_coast=12)
+    patient.update(Detection((100.0, 100.0, 104.0, 104.0), 0.9, kind="ball"))
+    for _ in range(6):
+        patient.update(None)
+    reacquired = patient.update(Detection((410.0, 100.0, 414.0, 104.0), 0.9, kind="ball"))
+    assert reacquired is not None and reacquired[0] > 350.0, (
+        "after a gap the ball should be allowed to have moved further"
+    )
