@@ -25,6 +25,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from . import pitch
+
 
 @dataclass
 class TeamAssignment:
@@ -216,3 +218,84 @@ def majority_team(labels: list[str]) -> str:
     if not labels:
         return "unknown"
     return Counter(labels).most_common(1)[0][0]
+
+
+@dataclass
+class OfficialsResult:
+    """Which of the colour outliers are keepers, and which are officials."""
+
+    roles: dict[int, str]
+    evidence: dict[int, dict]
+
+    def role_of(self, track_id: int) -> str:
+        return self.roles.get(track_id, "unknown")
+
+
+def classify_officials(
+    candidate_ids: set[int],
+    trajectories: dict[int, list[tuple[float, float]]],
+    ball: list[tuple[float, float]] | None = None,
+    goal_band_m: float = 18.0,
+    max_keeper_range_m: float = 34.0,
+) -> OfficialsResult:
+    """Split colour outliers into goalkeepers and match officials.
+
+    Colour alone cannot do this. Both wear kit unlike either team, which is
+    exactly why they end up in the same bucket, and a referee's black is not
+    reliably more or less like a keeper's green than the two teams are like each
+    other. What separates them is where they spend their time, so this runs on
+    pitch coordinates rather than pixels.
+
+    A goalkeeper lives in a band in front of one goal and essentially never
+    leaves it, so their x is extreme and its range is small. A referee follows
+    play across the whole pitch, so their x range is large and they are usually
+    near the ball. Those two signals disagree strongly enough that a simple rule
+    separates them, and the evidence is returned so a wrong call can be
+    understood rather than just observed.
+
+    Anything with too little history to judge is left `unknown`, because
+    mislabelling a defender as a keeper would corrupt the offside line, which is
+    worse than declining to label.
+    """
+    roles: dict[int, str] = {}
+    evidence: dict[int, dict] = {}
+
+    ball_by_index = ball or []
+
+    for tid in sorted(candidate_ids):
+        points = trajectories.get(tid, [])
+        if len(points) < 8:
+            roles[tid] = "unknown"
+            evidence[tid] = {"reason": "too few observations", "frames": len(points)}
+            continue
+
+        xs = np.array([p[0] for p in points], dtype=np.float64)
+        ys = np.array([p[1] for p in points], dtype=np.float64)
+
+        median_x = float(np.median(xs))
+        x_range = float(np.percentile(xs, 95) - np.percentile(xs, 5))
+        distance_to_goal = float(pitch.HALF_LENGTH - abs(median_x))
+
+        mean_ball_distance = None
+        if ball_by_index and len(ball_by_index) >= len(points):
+            paired = [
+                float(np.hypot(px - bx, py - by))
+                for (px, py), (bx, by) in zip(points, ball_by_index)
+            ]
+            if paired:
+                mean_ball_distance = float(np.mean(paired))
+
+        is_keeper = distance_to_goal <= goal_band_m and x_range <= max_keeper_range_m
+
+        roles[tid] = "keeper" if is_keeper else "referee"
+        evidence[tid] = {
+            "medianX": round(median_x, 1),
+            "xRange": round(x_range, 1),
+            "distanceToGoalM": round(distance_to_goal, 1),
+            "meanBallDistanceM": (
+                round(mean_ball_distance, 1) if mean_ball_distance is not None else None
+            ),
+            "medianY": round(float(np.median(ys)), 1),
+        }
+
+    return OfficialsResult(roles=roles, evidence=evidence)

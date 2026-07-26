@@ -110,6 +110,10 @@ export function analyseSnapshot(
 
   const attackers = players.filter((p) => p.team === attacking);
   const defenders = players.filter((p) => p.team === defending);
+  // Keepers are deliberately kept out of both squads. Including one would
+  // stretch the measured block depth by the 40m they stand behind the line, and
+  // would put a goalkeeper in the list of passing options.
+  const keepers = players.filter((p) => p.team === "keeper");
 
   const goalX = attackers.length && defenders.length ? attackingGoalX(attackers, defenders) : 52.5;
 
@@ -122,9 +126,10 @@ export function analyseSnapshot(
   const lanes = carrier ? analysePassingLanes(carrier, attackers, defenders, model, goalX) : [];
 
   // The block defends the goal the attackers are running at.
-  const block = defenders.length >= 3 ? analyseShape(defenders, defending, goalX) : null;
+  const block =
+    defenders.length >= 3 ? analyseShape(defenders, defending, goalX, keepers) : null;
   const attackingShape =
-    attackers.length >= 3 ? analyseShape(attackers, attacking, -goalX) : null;
+    attackers.length >= 3 ? analyseShape(attackers, attacking, -goalX, keepers) : null;
 
   const space = computeSpace
     ? analyseSpace(players, "team_a", "team_b", options.spaceCellM ?? 2, model)

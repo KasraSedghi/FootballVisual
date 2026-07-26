@@ -27,10 +27,12 @@ import cv2
 import numpy as np
 
 from . import pitch
+from .autocalibrate import calibrate_auto
 from .calibrate import HomographyTracker, landmark_correspondences, pitch_error
+from .cuts import CutDetector
 from .detect import BallDetector, Detection, PlayerDetector, open_video
 from .homography import calibrate_from_landmarks, image_point_for_player, invert, project
-from .teams import TeamVoter
+from .teams import TeamVoter, classify_officials
 from .track import BallTracker, ByteTracker
 
 
@@ -50,6 +52,12 @@ class PipelineConfig:
     click_noise_px: float = 2.0
     smooth_window: int = 9
     verbose: bool = True
+    # Calibrate from the pitch markings instead of clicked landmarks.
+    auto_calibrate: bool = False
+    camera_side: str = "minus_y"
+    # Detect shot changes and re-calibrate, rather than propagating a
+    # homography across a cut that it cannot possibly still describe.
+    detect_cuts: bool = True
 
 
 @dataclass
@@ -98,6 +106,10 @@ class Pipeline:
         handing the pipeline a free perfect answer.
         """
         cfg = self.config
+        if cfg.auto_calibrate:
+            raise RuntimeError(
+                "auto calibration is handled in run(), not _seed_homography"
+            )
         if cfg.calibration is not None:
             data = json.loads(Path(cfg.calibration).read_text())
             correspondences = {k: tuple(v) for k, v in data["landmarks"].items()}
@@ -144,8 +156,14 @@ class Pipeline:
         ball_tracker = BallTracker()
         voter = TeamVoter()
 
-        h = self._seed_homography(width, height)
-        h_tracker = HomographyTracker(h=h)
+        cut_detector = CutDetector() if cfg.detect_cuts else None
+        h: np.ndarray | None = None
+        h_tracker: HomographyTracker | None = None
+        if not cfg.auto_calibrate:
+            h = self._seed_homography(width, height)
+            h_tracker = HomographyTracker(h=h)
+        self.stats["cuts"] = []
+        self.stats["recalibrations"] = 0
 
         truth = None
         if cfg.ground_truth is not None:
@@ -165,7 +183,50 @@ class Pipeline:
             detections = detector(frame)
             boxes = [d.bbox for d in detections]
 
-            if index == 0:
+            # A cut invalidates the running homography outright. Propagating
+            # across one produces a confidently wrong answer with no signal that
+            # anything happened, so the estimate is rebuilt from the markings
+            # instead, seeded with the last good fit to settle the pitch's
+            # rotational symmetry.
+            cut = cut_detector.update(frame, index) if cut_detector else False
+            if cut:
+                self.stats["cuts"].append(
+                    {"frame": index, "correlation": round(cut_detector.last_correlation, 3)}
+                )
+                if cfg.verbose:
+                    print(f"  shot change at frame {index}, re-calibrating")
+
+            needs_calibration = h is None or cut
+            if needs_calibration:
+                result = calibrate_auto(
+                    frame, camera_side=cfg.camera_side, prior_h=h
+                )
+                if result is not None and result.is_confident:
+                    h = result.h
+                    h_tracker = HomographyTracker(h=h)
+                    h_tracker.start(frame, boxes)
+                    self.stats["recalibrations"] += 1
+                    if cfg.verbose:
+                        print(
+                            f"    auto calibrated: {result.score:.2f}px, "
+                            f"{result.inlier_fraction:.0%} of the model explained"
+                        )
+                elif h is None:
+                    # Nothing to fall back on yet, so this frame cannot be
+                    # projected at all. Skip it rather than invent a homography.
+                    if cfg.verbose and index % 25 == 0:
+                        print(f"  frame {index}: no confident calibration yet")
+                    continue
+                else:
+                    # Keep the old homography. It is wrong after a cut, but a
+                    # low-confidence automatic fit is likely worse, and the
+                    # count of unresolved cuts is reported either way.
+                    if cfg.verbose:
+                        print("    re-calibration was not confident, keeping previous")
+                    h_tracker = HomographyTracker(h=h)
+                    h_tracker.start(frame, boxes)
+            elif index == 0 or h_tracker is None:
+                h_tracker = HomographyTracker(h=h)
                 h_tracker.start(frame, boxes)
             else:
                 h = h_tracker.step(frame, boxes)
@@ -245,6 +306,23 @@ class Pipeline:
             for tid, (x, y) in rec.players.items():
                 series[tid].append((rec.frame, x, y))
 
+        # Colour puts keepers and officials in the same "other" bucket because
+        # both wear kit unlike either team. Telling them apart needs pitch
+        # positions, which only exist now that everything has been projected.
+        trajectories = {
+            tid: [(p[1], p[2]) for p in points] for tid, points in series.items()
+        }
+        ball_series = [r.ball for r in self.records if r.ball is not None]
+        officials = classify_officials(
+            candidate_ids=set(assignment.keeper_ids),
+            trajectories=trajectories,
+            ball=ball_series or None,
+        )
+        self.stats["officials"] = {
+            str(tid): {"role": role, **officials.evidence.get(tid, {})}
+            for tid, role in officials.roles.items()
+        }
+
         smoothed: dict[int, dict[int, tuple[float, float]]] = {}
         for tid, points in series.items():
             arr = np.array([[p[1], p[2]] for p in points], dtype=np.float64)
@@ -267,9 +345,16 @@ class Pipeline:
         min_len = max(5, int(0.08 * max(1, len(self.records))))
         keep = {tid for tid, pts in series.items() if len(pts) >= min_len}
 
+        def label_for(track_id: int) -> str:
+            team = assignment.team_of(track_id)
+            if team != "other":
+                return team
+            role = officials.role_of(track_id)
+            return role if role in ("keeper", "referee") else "other"
+
         tracks_out = []
         for tid in sorted(keep):
-            team = assignment.team_of(tid)
+            team = label_for(tid)
             tracks_out.append(
                 {
                     "id": int(tid),
@@ -289,7 +374,7 @@ class Pipeline:
                 players.append(
                     {
                         "id": int(tid),
-                        "team": assignment.team_of(tid),
+                        "team": label_for(tid),
                         "x": round(x, 3),
                         "y": round(y, 3),
                     }

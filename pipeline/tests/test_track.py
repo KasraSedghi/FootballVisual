@@ -159,3 +159,48 @@ def test_team_clustering_separates_two_colour_groups():
 def test_team_clustering_declines_when_there_is_nothing_to_cluster():
     assert assign_teams({}).labels == {}
     assert assign_teams({1: [np.array([50.0, 0.0, 0.0])] * 5}).labels == {}
+
+
+def test_keeper_and_referee_are_told_apart_by_where_they_go():
+    """Colour cannot separate a keeper from a referee, position can.
+
+    Both wear kit unlike either team, so both land in the same colour outlier
+    bucket. What distinguishes them is that a keeper lives in front of one goal
+    while a referee follows play across the whole pitch.
+    """
+    from footballvisual.teams import classify_officials
+
+    keeper = [(48.0 + 0.5 * np.sin(i / 3.0), 2.0 * np.sin(i / 5.0)) for i in range(60)]
+    # A referee tracking play from one third to the other.
+    referee = [(-30.0 + i, 8.0 * np.sin(i / 7.0)) for i in range(60)]
+
+    result = classify_officials(
+        candidate_ids={1, 2},
+        trajectories={1: keeper, 2: referee},
+    )
+    assert result.role_of(1) == "keeper"
+    assert result.role_of(2) == "referee"
+    # The evidence should be inspectable, not just the verdict.
+    assert result.evidence[1]["distanceToGoalM"] < 18.0
+    assert result.evidence[2]["xRange"] > 34.0
+
+
+def test_a_track_with_too_little_history_is_left_unknown():
+    """Better to decline than to mislabel a defender as a keeper.
+
+    A wrong keeper label moves the offside line, so an uncertain call here is
+    more damaging than a missing one.
+    """
+    from footballvisual.teams import classify_officials
+
+    result = classify_officials(candidate_ids={7}, trajectories={7: [(50.0, 0.0)] * 3})
+    assert result.role_of(7) == "unknown"
+
+
+def test_a_keeper_at_the_other_end_is_still_a_keeper():
+    """The rule must be symmetric in x, not hardcoded to one goal."""
+    from footballvisual.teams import classify_officials
+
+    keeper = [(-49.0 + 0.4 * np.sin(i / 3.0), 1.5 * np.sin(i / 4.0)) for i in range(40)]
+    result = classify_officials(candidate_ids={3}, trajectories={3: keeper})
+    assert result.role_of(3) == "keeper"

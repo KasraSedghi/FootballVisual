@@ -18,7 +18,12 @@ import { DEFAULT_MOTION } from "./types";
  * it every front-to-back measurement would be sign-ambiguous and the defensive
  * line would be computed from the wrong end of the team.
  */
-export function analyseShape(players: PlayerState[], team: TeamId, goalX: number): BlockShape | null {
+export function analyseShape(
+  players: PlayerState[],
+  team: TeamId,
+  goalX: number,
+  keepers: PlayerState[] = [],
+): BlockShape | null {
   if (players.length < 3) return null;
 
   const pts: Vec2[] = players.map((p) => ({ x: p.x, y: p.y }));
@@ -52,11 +57,25 @@ export function analyseShape(players: PlayerState[], team: TeamId, goalX: number
     }
   }
 
-  // Offside line: the deepest outfield player of the defending team, excluding
-  // the keeper. Approximated as the second-deepest overall, which is what it
-  // resolves to whenever the keeper is the deepest, and stays sensible when the
-  // keeper is not being tracked at all.
-  const offsideLineX = byDepth.length >= 2 ? byDepth[1].x : byDepth[0].x;
+  // Offside line: the deepest *outfield* defender.
+  //
+  // With a tracked keeper this is exact, because `players` already excludes
+  // them and the deepest remaining defender is the line. Without one it falls
+  // back to the second-deepest, which is what the line resolves to whenever the
+  // keeper is the deepest player, and is the best available guess when nobody
+  // has been identified as a keeper. The distinction is reported rather than
+  // hidden, because an offside line drawn off the keeper instead of the last
+  // defender is wrong by the length of the penalty area.
+  const relevantKeeper = keepers
+    .filter((k) => Math.sign(k.x) === Math.sign(goalX) || goalX === 0)
+    .sort((a, b) => (b.x - a.x) * towardOwnGoal)[0];
+
+  const offsideLineUsesKeeper = relevantKeeper !== undefined;
+  const offsideLineX = offsideLineUsesKeeper
+    ? byDepth[0].x
+    : byDepth.length >= 2
+      ? byDepth[1].x
+      : byDepth[0].x;
 
   return {
     team,
@@ -72,6 +91,7 @@ export function analyseShape(players: PlayerState[], team: TeamId, goalX: number
     largestBackLineGapM: largestGap,
     backLineGapCentreY: gapCentreY,
     offsideLineX,
+    offsideLineUsesKeeper,
   };
 }
 

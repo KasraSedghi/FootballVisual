@@ -91,6 +91,9 @@ def _cmd_track(args: argparse.Namespace) -> int:
         max_frames=args.max_frames,
         smooth_window=args.smooth,
         verbose=not args.quiet,
+        auto_calibrate=args.auto_calibrate,
+        camera_side=args.camera_side,
+        detect_cuts=not args.no_cut_detection,
     )
     payload = Pipeline(config).run()
 
@@ -148,6 +151,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default="cpu")
     p.add_argument("--max-frames", type=int, default=None)
     p.add_argument("--smooth", type=int, default=9)
+    p.add_argument(
+        "--auto-calibrate",
+        action="store_true",
+        help="calibrate from the pitch markings instead of clicked landmarks",
+    )
+    p.add_argument(
+        "--camera-side",
+        default="minus_y",
+        choices=["minus_y", "plus_y"],
+        help="which touchline the camera is behind; resolves the pitch's mirror symmetry",
+    )
+    p.add_argument(
+        "--no-cut-detection",
+        action="store_true",
+        help="do not look for shot changes (propagates the homography across cuts)",
+    )
     p.add_argument("--quiet", action="store_true")
     p.set_defaults(func=_cmd_track)
 

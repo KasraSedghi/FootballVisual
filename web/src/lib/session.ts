@@ -118,8 +118,12 @@ export function teamLabel(team: TeamId): string {
       return "Team A";
     case "team_b":
       return "Team B";
+    case "keeper":
+      return "Goalkeeper";
+    case "referee":
+      return "Referee";
     case "other":
-      return "Keeper / official";
+      return "Unclassified";
     default:
       return "Unassigned";
   }

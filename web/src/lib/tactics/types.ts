@@ -8,7 +8,19 @@
  * on the size of the window it happened to be computed in.
  */
 
-export type TeamId = "team_a" | "team_b" | "other" | "unknown";
+/**
+ * A track's allegiance. `keeper` and `referee` are separated out from `other`
+ * because they must not enter team shape metrics: a keeper standing 40m behind
+ * the back line would stretch the defensive block's measured depth by that
+ * much, and a referee is not on either team at all.
+ */
+export type TeamId =
+  | "team_a"
+  | "team_b"
+  | "keeper"
+  | "referee"
+  | "other"
+  | "unknown";
 
 export interface Vec2 {
   x: number;
@@ -113,6 +125,8 @@ export interface BlockShape {
   backLineGapCentreY: number;
   /** Offside line for this team when defending, in pitch x. */
   offsideLineX: number;
+  /** True when a tracked keeper was available to compute the offside line. */
+  offsideLineUsesKeeper: boolean;
 }
 
 export interface SpaceControl {
