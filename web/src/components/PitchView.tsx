@@ -37,7 +37,12 @@ interface Props {
 const TEAM_FILL: Record<string, string> = {
   team_a: "#3b82f6",
   team_b: "#ef4444",
-  other: "#eab308",
+  // Keepers and officials are drawn distinctly because they are excluded from
+  // the team shape metrics, and a reader should be able to see that the block
+  // being measured does not include them.
+  keeper: "#22d3ee",
+  referee: "#facc15",
+  other: "#a78bfa",
   unknown: "#94a3b8",
 };
 

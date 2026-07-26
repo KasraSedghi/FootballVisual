@@ -171,13 +171,10 @@ a moving camera, jersey colours to cluster) and easy in ways it does not model (
 shadows, no crowd, no broadcast graphics, no camera cuts). It is a measurable test
 harness, not a claim of photorealism.
 
-To run on real footage, supply your own landmark calibration:
-
-```bash
-python -m footballvisual track --video match.mp4 --calibration calib.json --out tracks.json
-```
-
-where `calib.json` maps landmark names from `pitch.py` to the pixel where each appears.
+To run on real footage, see **[docs/REAL_FOOTAGE.md](docs/REAL_FOOTAGE.md)**. It says what
+a useful clip looks like, what is likely to break first (team clustering, if the two kits
+are not visually distinct), and how to fall back to clicked landmarks if automatic
+calibration cannot get a confident fit.
 
 ## Layout
 
