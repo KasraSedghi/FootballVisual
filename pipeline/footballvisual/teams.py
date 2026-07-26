@@ -237,6 +237,7 @@ def classify_officials(
     ball: list[tuple[float, float]] | None = None,
     goal_band_m: float = 18.0,
     max_keeper_range_m: float = 34.0,
+    min_referee_range_m: float = 25.0,
 ) -> OfficialsResult:
     """Split colour outliers into goalkeepers and match officials.
 
@@ -252,6 +253,13 @@ def classify_officials(
     near the ball. Those two signals disagree strongly enough that a simple rule
     separates them, and the evidence is returned so a wrong call can be
     understood rather than just observed.
+
+    Both roles require *positive* evidence. An earlier version treated referee as
+    "not a keeper", which labelled anything that failed the keeper test as an
+    official, including tracks that barely moved at all. A track that sits
+    mid-pitch with a four metre range is not a referee; it is more likely a
+    player whose colour was unreliable, or a spurious track. Those now stay
+    `other`, so the label means something.
 
     Anything with too little history to judge is left `unknown`, because
     mislabelling a defender as a keeper would corrupt the offside line, which is
@@ -286,8 +294,12 @@ def classify_officials(
                 mean_ball_distance = float(np.mean(paired))
 
         is_keeper = distance_to_goal <= goal_band_m and x_range <= max_keeper_range_m
+        # A referee follows play, so a large range along the pitch is the
+        # defining evidence. Without it there is nothing to distinguish an
+        # official from any other track the colour clustering could not place.
+        is_referee = not is_keeper and x_range >= min_referee_range_m
 
-        roles[tid] = "keeper" if is_keeper else "referee"
+        roles[tid] = "keeper" if is_keeper else ("referee" if is_referee else "other")
         evidence[tid] = {
             "medianX": round(median_x, 1),
             "xRange": round(x_range, 1),

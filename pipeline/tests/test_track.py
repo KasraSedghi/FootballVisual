@@ -185,6 +185,20 @@ def test_keeper_and_referee_are_told_apart_by_where_they_go():
     assert result.evidence[2]["xRange"] > 34.0
 
 
+def test_a_stationary_outlier_is_not_called_a_referee():
+    """Referee must be positive evidence, not "failed the keeper test".
+
+    A track sitting mid-pitch with a few metres of range is not an official; it
+    is more likely a player whose colour was unreliable. Labelling it referee
+    made the label meaningless, which is what this pins.
+    """
+    from footballvisual.teams import classify_officials
+
+    stationary = [(10.0 + 0.3 * np.sin(i / 4.0), -23.0) for i in range(40)]
+    result = classify_officials(candidate_ids={5}, trajectories={5: stationary})
+    assert result.role_of(5) == "other"
+
+
 def test_a_track_with_too_little_history_is_left_unknown():
     """Better to decline than to mislabel a defender as a keeper.
 

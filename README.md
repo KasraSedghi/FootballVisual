@@ -126,8 +126,8 @@ position p95          1.76 m
 detection coverage    74.6%   (21 of 21 players matched by some track)
 identity switches     7
 team assignment       100.0%
-ball coverage         99.2%
-ball MAE              3.11 m
+ball coverage         100.0%
+ball MAE              1.89 m
 ```
 
 How to read these:
