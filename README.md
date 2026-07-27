@@ -121,26 +121,26 @@ The synthetic clip knows where every player really was, so the pipeline can be s
 rather than demoed. `make demo` prints this:
 
 ```
-position MAE          0.65 m
-position p95          1.64 m
+position MAE          0.78 m
+position p95          1.76 m
 detection coverage    74.6%   (21 of 21 players matched by some track)
-identity switches     5
+identity switches     8
 team assignment       100.0%
-ball coverage         96.4%
-ball MAE              1.56 m
+ball coverage         100.0%
+ball MAE              1.85 m
 ```
 
 How to read these:
 
-- **Position MAE 0.65 m** bounds everything above it. A passing-lane margin that turns on
+- **Position MAE 0.78 m** bounds everything above it. A passing-lane margin that turns on
   distances finer than about a metre is noise, which is why the verdict thresholds are set
   in *seconds* rather than centimetres.
 - **Coverage 74.6%** counts frames, not players. Every one of the 21 on-screen players is
   followed by a track; the shortfall is frames where a player is missed and their track is
   coasting on prediction.
-- **5 identity switches** over 250 frames. Each one corrupts a trajectory from that point
+- **8 identity switches** over 250 frames. Each one corrupts a trajectory from that point
   on, so this is the number to watch when tuning.
-- **Ball MAE 1.56 m** is still the weakest number here, and it took three attempts to
+- **Ball MAE 1.85 m** is still the weakest number here, and it took three attempts to
   find out why, which is worth recording because two of them were wrong.
 
   Smoothing was not the cause: widening the window from 1 to 21 frames moved the error by
@@ -153,10 +153,10 @@ How to read these:
   The cause was the motion gate, which allowed the ball to jump 220 pixels between
   frames when a driven pass moves it about 0.64 m, a few tens of pixels at this scale.
   Tightening it and scaling it with time-since-last-seen took ball error from 3.11 m down
-  toward the current 1.56 m, with coverage at 96.4%.
+  toward the current 1.85 m, with coverage at 100%.
 
 Calibrating from the markings rather than from clicked landmarks is what moved position
-MAE from 1.29 m down toward 0.65 m. That is not surprising in hindsight: the landmark path
+MAE from 1.29 m down toward 0.78 m. That is not surprising in hindsight: the landmark path
 simulates a human clicking with two pixels of error, and a line fit over hundreds of pixels
 of evidence beats that. Run `make track-manual` to reproduce the clicked-landmark numbers.
 
