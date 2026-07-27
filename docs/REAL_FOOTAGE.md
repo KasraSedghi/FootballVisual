@@ -77,7 +77,7 @@ the first completely. `explained_fraction` now asks the second question: the cor
 the demo clip explains 81% of its detected lines, and these two explain 9% and 6%. They are
 now correctly rejected instead of silently trusted.
 
-Five things were tried and did not fix it, each measured rather than assumed:
+Six things were tried and did not fix it, each measured rather than assumed:
 
 | Attempt | Result |
 |---|---|
@@ -86,12 +86,24 @@ Five things were tried and did not fix it, each measured rather than assumed:
 | Tightening the grass colour bounds | Correctly stops the surface leaking into the stands, demo clip goes to 94m out |
 | Cutting the mask at the grass horizon | Real clips improve to 21 to 23% explained, still short of 35%, demo clip goes to 94m |
 | Upscaling 640x360 to 1280x720 before fitting | Worse, 1% explained. Not a resolution problem |
+| Rejecting lines without grass beside them (shipped) | Removes the hoardings that were winning the fit, roughly doubles explained_fraction, still short of the bar |
 
 The top-hat mask that did ship is a genuine improvement, and it is not enough. The masks it
 produces on these clips do contain the real markings, visibly so, alongside a large amount
-of crowd and hoarding text that the line fitting then prefers. The remaining work is
-filtering detected *lines* by whether they are plausibly pitch markings, not filtering mask
-pixels, and that is not done.
+of crowd and hoarding text that the line fitting then prefers.
+
+Line filtering has since been added and is the sixth attempt. `grass_support` rejects any
+detected line without grass on both sides of it, on the reasoning that paint is on grass
+and hoarding text is not. The discrimination itself works well: on these frames the
+markings score 42% to 100% and the hoardings score 30% and below, and crucially the two
+strongest lines in one whole image, at 1042px and 695px of support, were hoardings scoring
+zero. Those were the lines winning the fit.
+
+It still does not get either clip to a confident fit. `explained_fraction` moves from 0.09
+to 0.20 and 0.10 to 0.21 on the frames that shift most, one frame now declines outright
+rather than returning a wrong answer, and none of them clear the bar. The input to the
+search is cleaner and the search is not robust enough. The remaining work is a learned
+pitch-keypoint detector, not more classical filtering.
 
 Note the pattern in that table: every change that helps the real clips hurts the demo clip,
 and the demo clip's sensitivity traces to a single structure. Removing the top of the

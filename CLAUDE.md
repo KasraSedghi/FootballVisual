@@ -23,7 +23,15 @@ them into prose. It never receives raw coordinates, so it cannot redo the geomet
 produce an answer that disagrees with what is drawn on screen.
 
 Do not move a tactical decision into the prompt. If a new tactical concept is needed, add
-it to the engine with tests, then expose it through `reportFacts()`. The deterministic
+it to the engine with tests, then expose it through `reportFacts()`.
+
+The same rule governs clip retrieval (`web/src/lib/tactics/search.ts` and
+`api/search/route.ts`). There the model's whole output is a structured `TacticalQuery`
+against a fixed schema of thresholds, and the search runs in code over already-computed
+measurements. The model picks filters; it never decides whether a frame qualifies. Do not
+add a free-text field to that schema: anything the model cannot ground in a measured
+threshold is something it would be inventing, and a retrieval tool that returns a passage
+which does not have the property asked for is worse than no retrieval tool. The deterministic
 fallback in the same route must stay genuinely useful, not a stub: it is what runs when
 no `ANTHROPIC_API_KEY` is set, which is the default.
 
@@ -74,8 +82,19 @@ which helps the real clips hurts the demo clip. Anything that removes the top of
 `pitch_region`, whether erosion, tighter colour bounds, or a horizon cut, costs the far
 touchline and takes the demo clip to the same 93.8m every time.
 
-The remaining idea, not attempted, is filtering detected *lines* by whether they are
-plausibly pitch markings rather than filtering mask pixels.
+Filtering detected *lines* rather than mask pixels has since been done. `grass_support`
+rejects any line without grass beside it, which is what separates a marking from hoarding
+text, and on real frames the markings score 42% to 100% against 30% and below for
+everything else. It preserves the demo clip, measurably improves the real ones, and does
+**not** make them calibrate.
+
+Do not raise `MIN_GRASS_SUPPORT` above 0.35 without re-checking the demo clip directly. A
+touchline has grass on one side and stands on the other and scores 42.5%, so 0.5 looks
+obviously safe and silently costs 75 metres.
+
+The remaining work is a learned pitch-keypoint detector trained on
+[SoccerNet](https://www.soccer-net.org/tasks/camera-calibration), which annotates 23 lines
+and 3 circles per frame, rather than any further classical filtering.
 
 ## Non-obvious decisions, and why
 

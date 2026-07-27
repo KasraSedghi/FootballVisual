@@ -101,7 +101,26 @@ defensive line, the offside line, who is between the lines, and a pitch-control 
 from time-to-arrive (a soft logistic rather than a hard Voronoi, which would draw a crisp
 border between two players a tenth of a second apart).
 
-### 6. The analyst (`web/src/app/api/analyse/route.ts`)
+### 6. Clip retrieval (`web/src/lib/tactics/search.ts`, `api/search/route.ts`)
+
+Ask the clip a question and jump to the moments that answer it: *"a big gap in the last
+line"*, *"players between the lines with an open lane"*.
+
+The invariant holds here too, applied to search instead of narration. Claude's entire
+output is a structured `TacticalQuery` against a fixed schema of thresholds, and the search
+itself runs in code over measurements the engine already computed. The model picks filters;
+it never decides whether a frame qualifies.
+
+That is what makes a result worth showing a coach. Every returned passage provably has the
+property asked for, the same question always returns the same passages, and each hit shows
+the numbers that qualified it. A model picking moments directly offers none of those.
+
+Consecutive matches collapse into passages, with short gaps bridged, because at 25fps a two
+second moment is fifty near-identical hits and a player lost for two frames is detection
+flicker rather than a new moment. With no API key a heuristic parser handles the common
+phrasings, and the response says which path produced the query.
+
+### 7. The analyst (`web/src/app/api/analyse/route.ts`)
 
 Every tactical *fact* is computed before the model is involved. Claude receives the
 numbers and turns them into the sentence a coach would say. It never sees raw
@@ -391,9 +410,10 @@ model, and none of those are things this project has measured.
 make test
 ```
 
-40 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
-rejection, end-to-end calibration accuracy in metres), automatic calibration, and the
-tracker. 26 TypeScript tests covering the lane solver and scoring.
+49 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
+rejection, end-to-end calibration accuracy in metres), automatic calibration, the tracker,
+and the comparison to professional tracking. 40 TypeScript tests covering the lane solver,
+scoring, and clip retrieval.
 
 Two of these pin real bugs found during development, which is most of the reason to have
 them:
