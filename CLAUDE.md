@@ -35,6 +35,49 @@ which does not have the property asked for is worse than no retrieval tool. The 
 fallback in the same route must stay genuinely useful, not a stub: it is what runs when
 no `ANTHROPIC_API_KEY` is set, which is the default.
 
+## Valuation: two trained models, and neither is a guess
+
+`xt.ts` says what a position is worth, `value.ts` says what an action is worth. Both read
+JSON committed to the repo and trained by `make train-models` from StatsBomb open data.
+Nothing at runtime touches the network, and `make demo` must never depend on these.
+
+The invariant here is that **neither number was chosen by taste**. The reward comes from
+counting 1.05M actions across 597 matches; the risk comes from fitting 45,530 real passes
+with known outcomes. If you add a third term, fit it or count it, do not tune it. The one
+declared simplification is that a turnover is valued at zero for the passing team rather
+than negative, which makes the figure mildly generous to risky passes.
+
+Traps, all of which cost time already:
+
+- **The xT recursion converges at the move share, which is about 0.99.** Twelve iterations
+  looks converged and leaves the build-up third still climbing, understating exactly the
+  part of the pitch the demo clip is played in. `solve` runs to a tolerance;
+  `test_a_dozen_iterations_is_not_enough` pins it.
+- **`completion.py` duplicates `DEFAULT_MOTION` from `types.ts`.** The fit is only a
+  calibration of the engine's margin if both use the same physics, and they cannot share a
+  module. `TestMotionConstants` parses `types.ts` and compares. Change one, change both.
+- **A 360 freeze frame only holds players who were on camera.** A pass whose nearest
+  defender was out of shot looks safer than it was, so frames with fewer than eight visible
+  opponents are dropped. Do not lower that without re-checking the reliability table.
+- **`train_xt.py` caches raw tallies to `data/xt-counts.npz`.** Changing the grid
+  resolution or the solver should re-solve from cache in milliseconds, never re-download
+  for ten minutes.
+- **Transitions divide by moves *attempted*, never by moves that arrived.** Normalising
+  each row to sum to 1 says every move reaches somewhere, which deletes the chain's only
+  absorbing state. With a move share near 0.99 the value then diffuses until the grid is
+  flat and very slightly *decreasing* toward the goal. This shipped for one run and was
+  invisible at twelve iterations because diffusion had not finished;
+  `test_losing_the_ball_absorbs_value_instead_of_recirculating_it` pins it, and that test
+  was checked to fail under the broken normalisation rather than merely assumed to.
+- **Completion rises with pass length at a fixed margin, and that is correct.** It looks
+  inverted, because unconditionally long passes complete much less often. Conditioned on
+  the margin the sign flips in every band, since a six metre pass that only just wins the
+  race has a defender on top of it while a forty metre pass with the same margin is
+  crossing open space. Do not "fix" the sign; the cross-tab is in the README.
+
+Lane valuation rides alongside the existing geometric `score` rather than replacing it, so
+the displayed ranking is unchanged and its tests still mean what they meant.
+
 ## Similarity retrieval has no model in it, and that is the point
 
 `web/src/lib/tactics/embedding.ts` maps a frame to a vector so "moments like this one"

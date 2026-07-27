@@ -11,6 +11,7 @@
  */
 
 import { analysePassingLanes, attackingGoalX, estimateVelocities } from "./lanes";
+import { offBallThreat, valueLanes } from "./value";
 import {
   analyseShape,
   analyseSpace,
@@ -30,6 +31,15 @@ import { DEFAULT_MOTION } from "./types";
 export * from "./types";
 export * from "./geometry";
 export { analysePassingLanes, interceptionMargin, estimateVelocities, scoreLane } from "./lanes";
+export { threatAt, threatDelta, XT_MODEL } from "./xt";
+export type { ActionValue, OffBallValue } from "./types";
+export {
+  COMPLETION_MODEL,
+  completionProbability,
+  offBallThreat,
+  valueLanes,
+  valueOfPass,
+} from "./value";
 export { analyseShape, analyseSpace, playersBeyondLine, playersBetweenLines } from "./shape";
 
 /**
@@ -123,7 +133,13 @@ export function analyseSnapshot(
     carrier = nearestPlayer(attackers, resolved.ball);
   }
 
-  const lanes = carrier ? analysePassingLanes(carrier, attackers, defenders, model, goalX) : [];
+  const rawLanes = carrier
+    ? analysePassingLanes(carrier, attackers, defenders, model, goalX)
+    : [];
+  // Valued after ranking, not before. The ordering the sandbox shows is still
+  // the geometric score, so adding a valuation cannot quietly reshuffle a list
+  // whose behaviour is pinned by tests; the value rides along as extra fact.
+  const lanes = valueLanes(rawLanes, goalX);
 
   // The block defends the goal the attackers are running at.
   const block =
@@ -147,6 +163,7 @@ export function analyseSnapshot(
     space,
     playersBeyondLine: block ? playersBeyondLine(attackers, block, goalX) : [],
     playersBetweenLines: playersBetweenLines(attackers, defenders, goalX),
+    offBall: offBallThreat(players, attacking, resolved.ball, carrier?.id ?? null, goalX),
   };
 }
 
@@ -178,6 +195,12 @@ export function reportFacts(report: TacticalReport) {
       defendersBypassed: l.defendersBypassed,
       receiverPressureM: Number(l.receiverPressureM.toFixed(1)),
       closestDefender: nameOf(l.threatId),
+      // Valuation, in goal probability. Given to the model as a computed fact
+      // like every other number here, so it can say a pass is worth more than
+      // another without ever being the thing that decided so.
+      completion: l.value ? Number(l.value.completion.toFixed(3)) : null,
+      threatIfCompleted: l.value ? Number(l.value.toXT.toFixed(4)) : null,
+      expectedThreatAdded: l.value ? Number(l.value.expectedXT.toFixed(4)) : null,
     })),
     defensiveBlock: report.block
       ? {
@@ -198,5 +221,10 @@ export function reportFacts(report: TacticalReport) {
       : null,
     playersBetweenLines: report.playersBetweenLines.map(nameOf),
     playersBeyondLine: report.playersBeyondLine.map(nameOf),
+    bestPositionedOffBall: report.offBall.slice(0, 3).map((o) => ({
+      player: nameOf(o.playerId),
+      threat: Number(o.threat.toFixed(4)),
+      gainOverBall: Number(o.gainOverBall.toFixed(4)),
+    })),
   };
 }

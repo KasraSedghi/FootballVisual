@@ -120,6 +120,37 @@ export default function TacticsPanel({
                         <span className="text-slate-200">{lane.defendersBypassed}</span>
                       </span>
                     </div>
+                    {lane.value && (
+                      /*
+                       * Reward, risk and the product, in that order, because
+                       * that is the order the trade is read in. Showing only
+                       * the expected value would hide whether a low number
+                       * means the pass gains nothing or means it probably does
+                       * not arrive, and those call for opposite decisions.
+                       */
+                      <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/10 pt-1.5 text-[11px]">
+                        <span className="text-slate-500">
+                          if it lands{" "}
+                          <span className="text-slate-300">
+                            {lane.value.toXT.toFixed(4)}
+                          </span>
+                          <span className="px-1 text-slate-600">x</span>
+                          <span className="text-slate-300">
+                            {(lane.value.completion * 100).toFixed(0)}%
+                          </span>
+                        </span>
+                        <span
+                          className={
+                            lane.value.expectedXT >= 0
+                              ? "font-semibold text-verdict-open"
+                              : "font-semibold text-slate-500"
+                          }
+                        >
+                          {lane.value.expectedXT >= 0 ? "+" : ""}
+                          {lane.value.expectedXT.toFixed(4)} xT
+                        </span>
+                      </div>
+                    )}
                   </button>
                 </li>
               );
@@ -158,6 +189,40 @@ export default function TacticsPanel({
               highlight={block.largestBackLineGapM > 12}
             />
           </dl>
+        </section>
+      )}
+
+      {detailed && report.offBall.length > 0 && (
+        <section className="rounded-lg border border-white/10 bg-slate-900/50 p-4">
+          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Best positioned
+          </h3>
+          <p className="mb-2.5 text-[11px] leading-relaxed text-slate-500">
+            Value of the ground each attacker is stood on, whether or not a pass
+            can reach them. A player high here with no lane in the list above is
+            a different problem to one with a lane and nowhere to go.
+          </p>
+          <ul className="space-y-1">
+            {report.offBall.slice(0, 4).map((o) => (
+              <li
+                key={o.playerId}
+                className="flex items-center justify-between gap-2 text-[11px]"
+              >
+                <span className="font-semibold text-slate-200">#{o.playerId}</span>
+                <span className="flex items-center gap-2 text-slate-400">
+                  <span className="font-mono">{o.threat.toFixed(4)} xT</span>
+                  <span
+                    className={
+                      o.gainOverBall >= 0 ? "text-verdict-open" : "text-slate-600"
+                    }
+                  >
+                    {o.gainOverBall >= 0 ? "+" : ""}
+                    {o.gainOverBall.toFixed(4)}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 

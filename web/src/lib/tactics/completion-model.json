@@ -1,0 +1,112 @@
+{
+ "coefficients": [
+  0.670524,
+  3.208941,
+  1.803776
+ ],
+ "uses_distance": true,
+ "margin_clip": [
+  -1.5,
+  2.0
+ ],
+ "distance_scale": 30.0,
+ "distance_clip": [
+  0.0,
+  60.0
+ ],
+ "train": {
+  "samples": 45530,
+  "base_rate": 0.8544,
+  "brier": 0.10165,
+  "brier_skill": 0.1828,
+  "uses_distance": true,
+  "reliability": [
+   {
+    "margin_from": -1.5,
+    "margin_to": -0.75,
+    "passes": 2096,
+    "observed": 0.4156,
+    "predicted": 0.348
+   },
+   {
+    "margin_from": -0.75,
+    "margin_to": -0.4,
+    "passes": 2096,
+    "observed": 0.5649,
+    "predicted": 0.5977
+   },
+   {
+    "margin_from": -0.4,
+    "margin_to": -0.2,
+    "passes": 2415,
+    "observed": 0.7143,
+    "predicted": 0.7093
+   },
+   {
+    "margin_from": -0.2,
+    "margin_to": -0.05,
+    "passes": 2825,
+    "observed": 0.7791,
+    "predicted": 0.7815
+   },
+   {
+    "margin_from": -0.05,
+    "margin_to": 0.1,
+    "passes": 4854,
+    "observed": 0.8006,
+    "predicted": 0.8312
+   },
+   {
+    "margin_from": 0.1,
+    "margin_to": 0.3,
+    "passes": 11363,
+    "observed": 0.8425,
+    "predicted": 0.8804
+   },
+   {
+    "margin_from": 0.3,
+    "margin_to": 0.6,
+    "passes": 13212,
+    "observed": 0.9711,
+    "predicted": 0.9397
+   },
+   {
+    "margin_from": 0.6,
+    "margin_to": 1.0,
+    "passes": 5310,
+    "observed": 0.9942,
+    "predicted": 0.9778
+   },
+   {
+    "margin_from": 1.0,
+    "margin_to": 2.0,
+    "passes": 1324,
+    "observed": 0.9955,
+    "predicted": 0.9947
+   }
+  ]
+ },
+ "holdout": {
+  "passes": 16575,
+  "brier_skill": 0.1665
+ },
+ "source": "StatsBomb open data, 360 freeze frames",
+ "seasons": [
+  {
+   "competition_id": 55,
+   "season_id": 282
+  },
+  {
+   "competition_id": 55,
+   "season_id": 43
+  },
+  {
+   "competition_id": 43,
+   "season_id": 106
+  },
+  {
+   "competition_id": 11,
+   "season_id": 90
+  }
+ ]
+}

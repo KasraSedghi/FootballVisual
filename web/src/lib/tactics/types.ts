@@ -77,6 +77,32 @@ export const DEFAULT_MOTION: MotionModel = {
 
 export type LaneVerdict = "open" | "contested" | "blocked";
 
+/**
+ * What an action is worth, in goal probability.
+ *
+ * Lives here rather than in `value.ts` so that `PassingLane` can carry one
+ * without the types module depending on the module that computes them. See
+ * `value.ts` for where each number comes from and what it assumes.
+ */
+export interface ActionValue {
+  /** Threat of the ball where it is now. */
+  fromXT: number;
+  /** Threat of the ball if the pass arrives. */
+  toXT: number;
+  /** Reward if it comes off, ignoring the chance it does not. */
+  rewardXT: number;
+  /** Fitted probability the pass is completed. */
+  completion: number;
+  /**
+   * Expected threat added by playing it, against keeping the ball where it is.
+   *
+   * `completion * toXT - fromXT`, the whole risk-reward trade in one number.
+   * Negative is a real and common answer: a safe square ball keeps possession
+   * and gives up the position it started from.
+   */
+  expectedXT: number;
+}
+
 export interface PassingLane {
   targetId: number;
   from: Vec2;
@@ -102,6 +128,15 @@ export interface PassingLane {
   verdict: LaneVerdict;
   /** Combined 0..1 desirability, used only for ranking the display. */
   score: number;
+  /**
+   * Reward, risk and expected threat for this pass.
+   *
+   * Optional because the geometry stands on its own: a lane's margin and
+   * verdict are computed from the frame alone, while a value needs the two
+   * trained models. Anything constructing a lane by hand, including several
+   * tests, gets the geometry without having to supply a valuation.
+   */
+  value?: ActionValue;
 }
 
 export interface BlockShape {
@@ -163,4 +198,21 @@ export interface TacticalReport {
   playersBeyondLine: number[];
   /** Attackers positioned between the opponent's midfield and defensive lines. */
   playersBetweenLines: number[];
+  /**
+   * Threat of the ground each attacker is standing on, best first.
+   *
+   * The valuation that is not about the ball. A lane says what the carrier can
+   * do; this says who has found the valuable space, whether or not a pass to
+   * them exists.
+   */
+  offBall: OffBallValue[];
+}
+
+/** Value of a player's position, independent of whether a pass can reach them. */
+export interface OffBallValue {
+  playerId: number;
+  /** Threat of the ground this player is standing on. */
+  threat: number;
+  /** Threat they would add over the ball's current position. */
+  gainOverBall: number;
 }

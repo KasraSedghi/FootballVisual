@@ -28,6 +28,10 @@ flowchart TB
     S --> EM
     EM --> NN["nearest neighbour<br/><i>moments like this one</i>"]
 
+    XT[("xT grid<br/>597 matches")] --> VAL
+    PC[("completion fit<br/>45k passes")] --> VAL
+    L --> VAL["valuation<br/><i>completion x xT gained</i>"]
+
     L --> API{{"the model layer"}}
     S --> API
     SP --> API
@@ -39,6 +43,9 @@ flowchart TB
     style E fill:#1a3d1a,stroke:#4a4,color:#dfd
     style EM fill:#1a3d1a,stroke:#4a4,color:#dfd
     style NN fill:#1a3d1a,stroke:#4a4,color:#dfd
+    style VAL fill:#1a3d1a,stroke:#4a4,color:#dfd
+    style XT fill:#1a2a3d,stroke:#47a,color:#def
+    style PC fill:#1a2a3d,stroke:#47a,color:#def
     style API fill:#3d2a1a,stroke:#a74,color:#fda
     style J fill:#1a2a3d,stroke:#47a,color:#def
 ```
@@ -53,9 +60,10 @@ in how much autonomy they get, and none of them is allowed to compute a number:
 | `search` | Turn a question into a threshold query | Decide whether a frame matches |
 | `scout` | Choose what to investigate, and in what order | Measure anything; every tool calls the engine |
 
-Similarity retrieval sits on the measurement side of that line entirely, with no model in
-it at all. It is the one place where the answer is a shape rather than a sentence, and a
-shape can be compared arithmetically.
+Similarity retrieval and valuation both sit on the measurement side of that line entirely,
+with no model in either. Retrieval answers with a shape rather than a sentence, and a shape
+can be compared arithmetically. Valuation answers with a probability, and that probability
+was counted off real matches rather than reasoned about.
 
 ## Quick start
 
@@ -157,7 +165,118 @@ second moment is fifty near-identical hits and a player lost for two frames is d
 flicker rather than a new moment. With no API key a heuristic parser handles the common
 phrasings, and the response says which path produced the query.
 
-### 7. Similarity retrieval (`web/src/lib/tactics/embedding.ts`)
+### 7. Valuation (`web/src/lib/tactics/xt.ts`, `value.ts`)
+
+The engine could say a lane was open. It could not say whether the pass was
+*worth playing*, because nothing in it knew that a metre gained at the edge of
+the box is worth more than a metre gained in your own half. `progressionM`
+counted both the same, and a safe square ball scored well on every geometric
+measure while achieving nothing.
+
+Two models fix that, and neither is invented here.
+
+**Reward** is Expected Threat, in Karun Singh's formulation. Each pitch cell is
+worth the probability a possession there ends in a goal, which satisfies
+
+```
+xT(z) = s(z)·g(z) + m(z)·Σ T(z→z')·xT(z')
+```
+
+a team either shoots from `z` or moves the ball and inherits the value of
+wherever it lands. Value flows backwards from the goal through the passes that
+reach it, so the model works out that the half spaces beat the touchline without
+being told. Trained by `pipeline/train_xt.py` on **597 matches and 1.05M actions**
+of StatsBomb open data, and committed as JSON so nothing at runtime needs the
+network. Counts are folded about the halfway line's long axis before solving,
+because the left and right wings are the same place and folding halves the
+variance.
+
+One trap worth recording: the recursion converges at the rate of the move share,
+and away from the box barely one action in a hundred is a shot, so that rate is
+about 0.99. Twelve iterations looks converged and leaves the build-up third still
+climbing, which understates exactly the part of the pitch this project's clip is
+played in. It now runs to a tolerance, and `test_a_dozen_iterations_is_not_enough`
+pins the mistake.
+
+**Risk** is pass completion, and it is *fitted rather than assumed*. The
+tempting move is to run the interception margin through a logistic with
+hand-chosen constants, which would be an invented number wearing the costume of
+a measured one. Instead `pipeline/train_completion.py` runs the identical
+interception race over StatsBomb 360 freeze frames, which record every visible
+player at the moment of each pass, and fits the curve to **45,530 real passes**
+whose outcomes are known, held out by match against **16,575** more.
+
+That fit is also the first end-to-end validation this project has of its own
+core model. The interception race was argued for from first principles and
+pinned by hand-built unit tests; it had never been checked against real
+football. It holds:
+
+| margin (s) | passes | observed | predicted |
+|---|---|---|---|
+| −1.50 to −0.75 | 2,096 | 0.416 | 0.348 |
+| −0.40 to −0.20 | 2,415 | 0.714 | 0.709 |
+| −0.05 to +0.10 | 4,854 | 0.801 | 0.831 |
+| +0.30 to +0.60 | 13,212 | 0.971 | 0.940 |
+| +1.00 to +2.00 | 1,324 | 0.996 | 0.995 |
+
+Completion rises monotonically from 42% to 99.6% across the margin range, so the
+race genuinely measures what it claims to. Holdout Brier skill is 0.166 against
+the base rate. Pass length was admitted as a second feature only because it
+improved holdout skill (0.166 against 0.148); the choice is made in code against
+held-out matches, not by taste.
+
+Length behaves in a way worth writing down, because it looks like a bug and is
+not. Unconditionally, longer passes complete far less often, 0.91 between 10m and
+20m against 0.40 beyond 45m. Hold the interception margin fixed and the sign
+flips, in every band measured:
+
+| margin (s) | short (0-12m) | long (25-60m) |
+|---|---|---|
+| −0.4 to 0.1 | 0.680 | 0.800 |
+| 0.1 to 0.3 | 0.789 | 0.913 |
+| 0.3 to 0.7 | 0.964 | 0.974 |
+
+The margin means different things at the two lengths. A six metre pass that only
+just wins the race has a defender on top of it in a tight area; a forty metre
+pass with the same margin is travelling through open space. Length is already
+priced into the margin, so what is left is a statement about the space around
+the ball. Worth noting that the freeze frame's camera truncation biases *against*
+this effect rather than producing it: a long pass whose target area was off
+camera gets an overstated margin, which would make long passes complete less
+often than predicted, not more.
+
+The linear term is a summary, not the truth: the real curve turns over at the
+longest range, where 25-60m at a comfortable margin drops slightly below 12-25m.
+A monotone term cannot represent that, which is a known and bounded limitation
+rather than a hidden one.
+
+Put together, a pass is worth `completion × xT(target) − xT(origin)`. Negative is
+a real and common answer: a safe square ball keeps the ball and gives up the
+position it started from. The one deliberate simplification is that a turnover is
+valued at zero for the passing team rather than negative, because pricing the
+opponent's counter would need a second model and a constant nobody here has
+measured.
+
+On the demo clip the valuation disagrees with the geometry, which is the reason
+it exists. At frame 140:
+
+| lane | verdict | margin | gains | value |
+|---|---|---|---|---|
+| → #20 | contested | 0.26s | +10m | **+0.0019 xT** |
+| → #37 | open | 0.64s | −10m | +0.0001 xT |
+| → #5 | open | 0.52s | −10m | −0.0004 xT |
+
+Two lanes are comfortably open and one is contested, and the contested one is the
+only pass worth playing. The open pair go backwards, so they buy safety with
+position. No arrangement of the old geometric weights says that, because none of
+them knew what the ground was worth.
+
+`offBallThreat` applies the same grid to where every attacker is *standing*,
+which is the valuation that is not about the ball at all. A player in dangerous
+space with no lane to them is a different coaching problem to one with an open
+lane and nowhere to go, and only the off-ball view separates the two.
+
+### 8. Similarity retrieval (`web/src/lib/tactics/embedding.ts`)
 
 Threshold search answers a question you already know how to ask. An analyst watching a
 clip usually has the opposite problem: there is a shape on screen, it obviously matters,
@@ -182,7 +301,7 @@ and swapping in a learned vector later changes `embedFrame` and nothing else.
 Results are spaced at least 25 frames apart. The true nearest neighbours of frame 120 are
 frames 119 and 121, which are the same moment and tell an analyst nothing.
 
-### 8. The scout (`web/src/app/api/scout/route.ts`)
+### 9. The scout (`web/src/app/api/scout/route.ts`)
 
 `analyse` handles one frame and `search` handles one query. Neither can answer *"how did
 they create their chances?"*, because that takes several searches, a look at what each
@@ -218,7 +337,7 @@ pattern matching. Deciding what to investigate next based on what the last searc
 is the part a model actually does, and a canned sequence of searches pretending to be an
 investigation would be worse than saying plainly that this one needs a key.
 
-### 9. The analyst (`web/src/app/api/analyse/route.ts`)
+### 10. The analyst (`web/src/app/api/analyse/route.ts`)
 
 Every tactical *fact* is computed before the model is involved. Claude receives the
 numbers and turns them into the sentence a coach would say. It never sees raw

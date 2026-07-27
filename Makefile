@@ -11,7 +11,7 @@ DATA    := data
 SPRITES := assets/sprites
 export YOLO_CONFIG_DIR := /tmp/Ultralytics
 
-.PHONY: help venv sprites render track track-manual evaluate skillcorner benchmark demo test test-py test-web web clean
+.PHONY: help venv sprites render track track-manual evaluate skillcorner train-models benchmark demo test test-py test-web web clean
 
 help:
 	@echo "make demo      full pipeline: sprites, render, track, evaluate"
@@ -86,6 +86,20 @@ skillcorner:
 			$(SKILLCORNER_REPO)/matches/$$id/$$id\_tracking_extrapolated.jsonl; \
 	done
 	@echo "Data is CC licensed by SkillCorner; credit them if you publish."
+
+# The two valuation models, trained from StatsBomb open data.
+#
+# Deliberately not part of `make demo`. Both need network access and several
+# minutes, and both write a small JSON that is committed to the repo precisely
+# so that a clone, a build and a test run never need either. Re-run them only
+# when the training set or the model form changes.
+#
+# `xt` caches its raw tallies in $(DATA), so re-solving after a change to the
+# grid resolution or the solver costs milliseconds rather than another download.
+train-models: venv
+	$(PY) pipeline/train_xt.py
+	$(PY) pipeline/train_completion.py
+	@echo "Data is provided by StatsBomb; credit them if you publish."
 
 benchmark: venv
 	$(PY) -m footballvisual benchmark \
