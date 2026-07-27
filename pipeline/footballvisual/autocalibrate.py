@@ -126,6 +126,10 @@ class AutoCalibration:
     inlier_fraction: float
     num_lines: int
     hypotheses_scored: int
+    # Fraction of the detected line pixels this fit accounts for. The other
+    # direction of `score`, and the only one of the three that notices a pitch
+    # shrunk onto a corner of the mask. See `_explained_fraction`.
+    explained_fraction: float = 0.0
     assignment: dict = field(default_factory=dict)
     # The equally-good fit with the pitch rotated 180 degrees, when one exists.
     # See `rotation_ambiguous`.
@@ -155,12 +159,25 @@ class AutoCalibration:
     def is_confident(self) -> bool:
         """Whether this fit should be trusted without a human looking at it.
 
-        Both terms matter. A low mean distance says the reprojected model sits
-        on white pixels; a high inlier fraction says *most* of the model does,
-        not just the few lines it was fitted to. A wrong assignment can achieve
-        the first and rarely achieves the second.
+        All three terms matter, and each was added because the ones before it
+        were not enough. A low mean distance says the reprojected model sits on
+        white pixels. A high inlier fraction says *most* of the model does, not
+        just the few lines it was fitted to, which a wrong assignment rarely
+        achieves.
+
+        Both of those only ever look outward from the model, and a fit that
+        shrinks the pitch onto a dense patch of the mask passes them both while
+        being 94 metres wrong: score 0.85, inlier fraction 0.98, and confident.
+        That fit explains 5% of the detected line pixels, against 81% for the
+        truth. So the third term asks the question from the other side, and the
+        threshold sits far below any correct fit measured rather than tuned
+        close to that one counterexample.
         """
-        return self.score < 4.0 and self.inlier_fraction > 0.55
+        return (
+            self.score < 4.0
+            and self.inlier_fraction > 0.55
+            and self.explained_fraction > 0.35
+        )
 
 
 def _odd(value: float, minimum: int = 3) -> int:
@@ -608,6 +625,53 @@ def _score_homography(
     return float(d.mean()), float((d < 4.0).mean())
 
 
+def _explained_fraction(
+    h: np.ndarray, mask: np.ndarray, width: int, height: int, tolerance_px: int = 6
+) -> float:
+    """Fraction of the detected line pixels that the fitted pitch accounts for.
+
+    This is the other half of `_score_homography`, and without it the scoring is
+    one-sided in a way that admits a confidently wrong answer. That function asks
+    only whether every model marking lands on a detected line pixel. A homography
+    that shrinks the pitch down onto a dense patch of the mask satisfies that
+    completely, scoring under a pixel with a 0.98 inlier fraction while sitting
+    94 metres from the truth, because nothing ever asks about the detected lines
+    it left unexplained. Measured on that exact fit, this returns 5%, against 81%
+    for the correct one and 81% for the ground truth homography.
+
+    Computed once for the winner rather than per hypothesis. It needs a dilation
+    over the whole frame, which is far too expensive to run tens of thousands of
+    times, and it is a check on the answer rather than a way to find it.
+    """
+    pixels = mask > 0
+    if not pixels.any():
+        return 0.0
+
+    # Sample finer than the scoring pass: this rasterises the model into an
+    # image, so gaps between samples would read as unexplained line pixels.
+    try:
+        image = project(h, _model_samples(0.75))
+    except (HomographyError, np.linalg.LinAlgError):
+        return 0.0
+
+    on_screen = (
+        np.isfinite(image).all(axis=1)
+        & (image[:, 0] >= 0)
+        & (image[:, 0] < width)
+        & (image[:, 1] >= 0)
+        & (image[:, 1] < height)
+    )
+    points = image[on_screen].astype(np.int32)
+    if not len(points):
+        return 0.0
+
+    drawn = np.zeros((height, width), dtype=np.uint8)
+    drawn[points[:, 1], points[:, 0]] = 255
+    kernel = np.ones((2 * tolerance_px + 1, 2 * tolerance_px + 1), np.uint8)
+    near_model = cv2.dilate(drawn, kernel) > 0
+    return float(near_model[pixels].mean())
+
+
 def _rotate180(h: np.ndarray) -> np.ndarray:
     """The same fit with the pitch model turned through 180 degrees."""
     rotated = h @ np.diag([-1.0, -1.0, 1.0])
@@ -786,6 +850,7 @@ def calibrate_auto(
         best.h, distance, width, height, spacing_m=FINE_SPACING_M
     )
     best.hypotheses_scored = scored
+    best.explained_fraction = _explained_fraction(best.h, mask, width, height)
 
     # A 180 degree rotation of the pitch maps every marking onto a marking and
     # preserves orientation, so it survives the camera-side constraint and

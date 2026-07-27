@@ -209,7 +209,8 @@ class Pipeline:
                     if cfg.verbose:
                         print(
                             f"    auto calibrated: {result.score:.2f}px, "
-                            f"{result.inlier_fraction:.0%} of the model explained"
+                            f"{result.inlier_fraction:.0%} of the model on markings, "
+                            f"{result.explained_fraction:.0%} of the markings explained"
                         )
                 elif h is None:
                     # Nothing to fall back on yet, so this frame cannot be
