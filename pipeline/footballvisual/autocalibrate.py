@@ -126,6 +126,10 @@ class AutoCalibration:
     inlier_fraction: float
     num_lines: int
     hypotheses_scored: int
+    # Fraction of the detected line pixels this fit accounts for. The other
+    # direction of `score`, and the only one of the three that notices a pitch
+    # shrunk onto a corner of the mask. See `_explained_fraction`.
+    explained_fraction: float = 0.0
     assignment: dict = field(default_factory=dict)
     # The equally-good fit with the pitch rotated 180 degrees, when one exists.
     # See `rotation_ambiguous`.
@@ -155,37 +159,143 @@ class AutoCalibration:
     def is_confident(self) -> bool:
         """Whether this fit should be trusted without a human looking at it.
 
-        Both terms matter. A low mean distance says the reprojected model sits
-        on white pixels; a high inlier fraction says *most* of the model does,
-        not just the few lines it was fitted to. A wrong assignment can achieve
-        the first and rarely achieves the second.
+        All three terms matter, and each was added because the ones before it
+        were not enough. A low mean distance says the reprojected model sits on
+        white pixels. A high inlier fraction says *most* of the model does, not
+        just the few lines it was fitted to, which a wrong assignment rarely
+        achieves.
+
+        Both of those only ever look outward from the model, and a fit that
+        shrinks the pitch onto a dense patch of the mask passes them both while
+        being 94 metres wrong: score 0.85, inlier fraction 0.98, and confident.
+        That fit explains 5% of the detected line pixels, against 81% for the
+        truth. So the third term asks the question from the other side, and the
+        threshold sits far below any correct fit measured rather than tuned
+        close to that one counterexample.
         """
-        return self.score < 4.0 and self.inlier_fraction > 0.55
+        return (
+            self.score < 4.0
+            and self.inlier_fraction > 0.55
+            and self.explained_fraction > 0.35
+        )
+
+
+def _odd(value: float, minimum: int = 3) -> int:
+    """Nearest odd integer at least `minimum`, for morphology kernels."""
+    k = int(round(value))
+    if k % 2 == 0:
+        k += 1
+    return max(minimum, k)
+
+
+def pitch_region(frame: np.ndarray, erode_frac: float = 0.012) -> np.ndarray:
+    """The playing surface: the largest connected patch of grass, pulled in.
+
+    Taking the *largest connected component* rather than all green matters,
+    because a stadium has green in the stands, on advertising, and on kit. And
+    eroding matters even more: the advertising hoardings run directly along the
+    touchline, so a mask that merely asks for white "near grass" accepts the
+    whole boarding as pitch marking. On a real Premier League frame that single
+    difference was the bulk of the problem, with only 0.52% of the frame being
+    white-inside-the-pitch against 4.21% white overall.
+
+    The colour bounds are deliberately loose, and tightening them was tried and
+    reverted. They are loose enough to admit a sky blue crowd under floodlights,
+    which the closing step then bridges into the pitch component, so the returned
+    surface reaches row 0 on every input tested and quietly contains the stands.
+    Tightening to hue 32 to 88 at saturation 40 fixes that cleanly, cutting the
+    surface to 70% of the frame and stopping it at the horizon, and it makes
+    calibration much *worse*: on the demo clip the fit goes from 0.09m to 94m
+    out, because the erosion that follows also pulls the boundary in off the far
+    touchline, and losing that one line costs five of the twenty-two detected
+    lines and the constraint that pins the far side of the pitch.
+
+    So the stands stay in. What keeps them out of the answer is `line_mask`,
+    whose top-hat is unmoved by anything broad, rather than this region. The
+    region's real job is connectivity, which is a reason to prefer it generous.
+    """
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    grass = cv2.inRange(hsv, np.array([25, 25, 25]), np.array([100, 255, 255]))
+
+    # Close small holes so players standing on the grass do not fragment it.
+    height, width = frame.shape[:2]
+    scale = min(height, width)
+    grass = cv2.morphologyEx(grass, cv2.MORPH_CLOSE, np.ones((_odd(scale / 40), _odd(scale / 40)), np.uint8))
+
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(grass, 8)
+    if count <= 1:
+        return np.zeros_like(grass)
+    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    region = (labels == largest).astype(np.uint8) * 255
+
+    erode = _odd(scale * erode_frac)
+    return cv2.erode(region, np.ones((erode, erode), np.uint8))
 
 
 def line_mask(frame: np.ndarray) -> np.ndarray:
     """Binary mask of pitch markings.
 
-    Keyed on "bright and unsaturated, with grass nearby" rather than brightness
-    alone, because the stands, the ball, and the players' kit are all bright too.
-    Requiring green in the neighbourhood is what restricts the mask to paint on
-    grass.
+    Two things make this work on real broadcast rather than only on a clean
+    render, and both were found by running it on a real frame.
+
+    The mask is restricted to the playing surface rather than to anything near
+    grass. Advertising hoardings sit right on the touchline and the score bug
+    sits over the crowd, both bright and unsaturated, so a proximity test lets
+    them straight in and they then dominate the line fitting. Note that
+    `pitch_region` is generous and does leak into the stands, deliberately: see
+    its docstring for why tightening it made calibration far worse. It is the
+    top-hat below, not the region, that keeps the crowd out of the answer.
+
+    Markings are found as *local* brightness, through a white top-hat, rather
+    than by any global threshold on the value channel. This is the difference
+    between working on one clip and working on both. A synthetic render puts its
+    lines at value 231 over grass at 94, so almost any global rule finds them; a
+    floodlit broadcast pitch has mow stripes and a lighting gradient that between
+    them span a wider range than the gap between paint and grass, so a global
+    rule either takes half the pitch or none of it. Two attempts failed here
+    before this one. A high percentile of the surface's brightness lands on lit
+    grass rather than paint on the render (96th percentile is 119, the lines are
+    at 231), and Otsu on the value channel splits floodlit grass into lit and
+    shaded halves instead of grass from paint, taking 77% of a real frame. The
+    top-hat asks the only question that is actually true of a pitch marking on
+    any of these inputs: is this pixel brighter than its own surroundings, on the
+    scale of a painted line.
+
+    Morphology kernels scale with the frame throughout. A structuring element
+    sized for a line at 1280x720 is twice too large at 640x360, which is the
+    resolution real broadcast clips actually arrive at.
     """
+    height, width = frame.shape[:2]
+    scale = min(height, width)
+
+    interior = pitch_region(frame)
+    if not interior.any():
+        return np.zeros((height, width), dtype=np.uint8)
+
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    value = hsv[:, :, 2]
+    inside = interior > 0
 
-    white = cv2.inRange(hsv, np.array([0, 0, 150]), np.array([180, 95, 255]))
-    grass = cv2.inRange(hsv, np.array([25, 30, 25]), np.array([100, 255, 255]))
+    # The structuring element must be comfortably wider than a line and narrower
+    # than the gaps between them, so the response peaks on paint and flattens on
+    # everything broad, including a mow stripe or a floodlight gradient.
+    top_hat = cv2.morphologyEx(
+        value,
+        cv2.MORPH_TOPHAT,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_odd(scale / 40), _odd(scale / 40))),
+    )
 
-    # Dilate the grass generously and keep only white that sits inside it.
-    near_grass = cv2.dilate(grass, np.ones((25, 25), np.uint8))
-    mask = cv2.bitwise_and(white, near_grass)
+    # Otsu is safe *here*, on the top-hat response, in a way it is not on raw
+    # brightness: the response really is bimodal, near zero on grass and high on
+    # paint, whatever the exposure. The floor stops it from manufacturing a split
+    # in a frame that contains no markings at all, where the response is noise.
+    otsu, _ = cv2.threshold(
+        top_hat[inside].reshape(-1, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    mask = (inside & (top_hat >= max(float(otsu), 12.0))).astype(np.uint8) * 255
 
-    # Pitch markings are thin. Removing anything that survives a large opening
-    # discards broad white regions such as kit, advertising and the sky.
-    broad = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((13, 13), np.uint8))
-    mask = cv2.subtract(mask, broad)
-
-    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    close_k = _odd(scale / 180)
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((close_k, close_k), np.uint8))
 
 
 def _normalise_line(x1: float, y1: float, x2: float, y2: float) -> np.ndarray | None:
@@ -515,6 +625,53 @@ def _score_homography(
     return float(d.mean()), float((d < 4.0).mean())
 
 
+def _explained_fraction(
+    h: np.ndarray, mask: np.ndarray, width: int, height: int, tolerance_px: int = 6
+) -> float:
+    """Fraction of the detected line pixels that the fitted pitch accounts for.
+
+    This is the other half of `_score_homography`, and without it the scoring is
+    one-sided in a way that admits a confidently wrong answer. That function asks
+    only whether every model marking lands on a detected line pixel. A homography
+    that shrinks the pitch down onto a dense patch of the mask satisfies that
+    completely, scoring under a pixel with a 0.98 inlier fraction while sitting
+    94 metres from the truth, because nothing ever asks about the detected lines
+    it left unexplained. Measured on that exact fit, this returns 5%, against 81%
+    for the correct one and 81% for the ground truth homography.
+
+    Computed once for the winner rather than per hypothesis. It needs a dilation
+    over the whole frame, which is far too expensive to run tens of thousands of
+    times, and it is a check on the answer rather than a way to find it.
+    """
+    pixels = mask > 0
+    if not pixels.any():
+        return 0.0
+
+    # Sample finer than the scoring pass: this rasterises the model into an
+    # image, so gaps between samples would read as unexplained line pixels.
+    try:
+        image = project(h, _model_samples(0.75))
+    except (HomographyError, np.linalg.LinAlgError):
+        return 0.0
+
+    on_screen = (
+        np.isfinite(image).all(axis=1)
+        & (image[:, 0] >= 0)
+        & (image[:, 0] < width)
+        & (image[:, 1] >= 0)
+        & (image[:, 1] < height)
+    )
+    points = image[on_screen].astype(np.int32)
+    if not len(points):
+        return 0.0
+
+    drawn = np.zeros((height, width), dtype=np.uint8)
+    drawn[points[:, 1], points[:, 0]] = 255
+    kernel = np.ones((2 * tolerance_px + 1, 2 * tolerance_px + 1), np.uint8)
+    near_model = cv2.dilate(drawn, kernel) > 0
+    return float(near_model[pixels].mean())
+
+
 def _rotate180(h: np.ndarray) -> np.ndarray:
     """The same fit with the pitch model turned through 180 degrees."""
     rotated = h @ np.diag([-1.0, -1.0, 1.0])
@@ -693,6 +850,7 @@ def calibrate_auto(
         best.h, distance, width, height, spacing_m=FINE_SPACING_M
     )
     best.hypotheses_scored = scored
+    best.explained_fraction = _explained_fraction(best.h, mask, width, height)
 
     # A 180 degree rotation of the pitch maps every marking onto a marking and
     # preserves orientation, so it survives the camera-side constraint and

@@ -13,6 +13,7 @@ import pytest
 
 from footballvisual import pitch
 from footballvisual.autocalibrate import (
+    _explained_fraction,
     _rotate180,
     calibrate_auto,
     extract_lines,
@@ -54,6 +55,55 @@ def render_lines_only(camera: BroadcastCamera, thickness: int = 3) -> np.ndarray
         if len(run) >= 2:
             cv2.polylines(frame, [np.array(run)], False, (245, 245, 245), thickness)
     return frame
+
+
+def render_full_frame(camera: BroadcastCamera, seed: int = 3) -> np.ndarray:
+    """A frame with everything the real renderer puts in one, except sprites.
+
+    This exists because `render_lines_only` was too easy, and being too easy hid
+    a real failure. A change to `line_mask` that broke calibration on the actual
+    demo clip by 79 metres left all eight tests in this file green, because none
+    of them ever saw mow stripes, a depth fade, film grain, a blur, or a stand.
+    Those are exactly what a brightness threshold trips over: the stripes alone
+    span a wider range than the gap between grass and paint.
+
+    It draws players as plain rectangles rather than loading sprites, because
+    `assets/sprites` is generated and not in the repository. Nothing about
+    calibration cares whether a player is a photograph or a block of colour, only
+    that the markings are occluded in places.
+    """
+    import cv2
+
+    from footballvisual import synth
+
+    rng = np.random.default_rng(seed)
+    frame = synth._grass(camera, rng)
+    synth._draw_lines(frame, camera)
+
+    for x_m, y_m, colour in (
+        (-14.0, -8.0, (200, 90, 60)),
+        (-3.0, 6.0, (60, 70, 210)),
+        (12.0, -18.0, (200, 90, 60)),
+        (26.0, 11.0, (60, 70, 210)),
+        (34.0, -3.0, (40, 200, 220)),
+    ):
+        pts, depth = camera.project_world(np.array([[x_m, y_m, 0.0]], dtype=np.float64))
+        if depth[0] <= 0:
+            continue
+        feet_x, feet_y = pts[0]
+        height_px = camera.player_pixel_height(x_m, y_m, synth.PLAYER_HEIGHT_M)
+        half_w = max(2, int(round(height_px * 0.16)))
+        cv2.rectangle(
+            frame,
+            (int(feet_x - half_w), int(feet_y - height_px)),
+            (int(feet_x + half_w), int(feet_y)),
+            colour,
+            -1,
+        )
+
+    frame = cv2.GaussianBlur(frame, (3, 3), 0.6)
+    grain = rng.integers(-5, 6, size=frame.shape, dtype=np.int16)
+    return np.clip(frame.astype(np.int16) + grain, 0, 255).astype(np.uint8)
 
 
 def a_camera(target_x: float = 18.0) -> BroadcastCamera:
@@ -115,6 +165,80 @@ def test_recovers_the_true_homography_to_within_a_metre():
         for h in candidates
     ]
     assert min(errors) < 1.0, f"best candidate was {min(errors):.2f}m out"
+
+
+def test_recovers_the_homography_from_a_fully_rendered_frame():
+    """The same fit, on a frame with mow stripes, a depth fade, blur and grain.
+
+    `test_recovers_the_true_homography_to_within_a_metre` calibrates flat grass
+    and clean white lines, which is a much easier image than the renderer
+    actually produces. This raises the floor to something textured.
+
+    Being honest about its limits: this is *not* sufficient. A `line_mask`
+    change that put the real demo clip 79 metres out was measured against this
+    frame too and came back 0.19m, well inside the assertion. Synthesising a
+    frame close enough to catch that turned out to be the wrong goal, because
+    the failure was never really about the mask. What that mask actually did was
+    let the search settle on a hypothesis with almost none of the pitch on
+    screen, leaving most of the real markings unexplained. The guard for that is
+    `test_a_fit_that_leaves_the_markings_unexplained_is_not_confident`.
+    """
+    camera = a_camera()
+    frame = render_full_frame(camera)
+
+    mask = line_mask(frame)
+    fraction = float((mask > 0).mean())
+    assert 0.003 < fraction < 0.10, (
+        f"markings should be a small minority of the frame, got {fraction:.1%}"
+    )
+
+    result = calibrate_auto(frame, camera_side="minus_y")
+    assert result is not None, "calibration should succeed on a rendered frame"
+    assert result.is_confident
+
+    candidates = [result.h]
+    if result.h_rotated is not None:
+        candidates.append(result.h_rotated)
+    errors = [
+        pitch_error(h, camera.H, image_size=(camera.width, camera.height))[0]
+        for h in candidates
+    ]
+    assert min(errors) < 1.0, f"best candidate was {min(errors):.2f}m out"
+
+
+def test_a_fit_that_leaves_the_markings_unexplained_is_not_confident():
+    """Regression: scoring only outward from the model admits a wrong answer.
+
+    `_score_homography` asks whether every model marking lands on a detected
+    line pixel. A homography that shrinks the pitch onto a dense patch of the
+    mask answers yes completely, and one really was produced during the real
+    footage work: mean distance 0.85px, inlier fraction 0.98, `is_confident`
+    True, and 94 metres from the truth. Nothing in the score ever asked about
+    the detected lines it left unexplained.
+
+    This constructs that shape of failure directly, by scaling a true fit down
+    about the frame centre so the whole pitch lands inside a corner of the real
+    markings. Both original terms stay happy; the fit must still be rejected.
+    """
+    camera = a_camera()
+    frame = render_lines_only(camera)
+    mask = line_mask(frame)
+
+    honest = calibrate_auto(frame, camera_side="minus_y")
+    assert honest is not None and honest.is_confident
+    assert honest.explained_fraction > 0.35, (
+        "a correct fit must account for most of the markings it can see"
+    )
+
+    # Shrink about the frame centre: same pitch, a quarter of the size.
+    cx, cy = camera.width / 2.0, camera.height / 2.0
+    shrink = np.array([[0.25, 0.0, cx * 0.75], [0.0, 0.25, cy * 0.75], [0.0, 0.0, 1.0]])
+    shrunk = shrink @ camera.H
+
+    explained = _explained_fraction(shrunk, mask, camera.width, camera.height)
+    assert explained < 0.35, (
+        f"a pitch shrunk into a corner explains almost nothing, got {explained:.2f}"
+    )
 
 
 def test_camera_side_is_required_to_resolve_the_mirror():
