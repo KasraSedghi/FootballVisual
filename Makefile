@@ -11,7 +11,7 @@ DATA    := data
 SPRITES := assets/sprites
 export YOLO_CONFIG_DIR := /tmp/Ultralytics
 
-.PHONY: help venv sprites render track track-manual evaluate demo test test-py test-web web clean
+.PHONY: help venv sprites render track track-manual evaluate skillcorner benchmark demo test test-py test-web web clean
 
 help:
 	@echo "make demo      full pipeline: sprites, render, track, evaluate"
@@ -57,6 +57,33 @@ evaluate: venv
 	$(PY) -m footballvisual evaluate \
 		--tracks $(DATA)/tracks.json \
 		--ground-truth $(DATA)/ground_truth.json
+
+# One match of open broadcast tracking data, published by SkillCorner and
+# PySport. It is the reference this project's coverage numbers are read against,
+# because "74.6% of players tracked" means nothing until you know what a
+# commercial system recovers from the same kind of footage.
+#
+# The tracking file is stored with Git LFS, so it has to come from the media
+# host. raw.githubusercontent.com serves the pointer text instead, which parses
+# as neither JSON nor an error.
+SKILLCORNER_MATCH := 2017461
+SKILLCORNER_DIR   := $(DATA)/skillcorner
+SKILLCORNER_REPO  := https://media.githubusercontent.com/media/SkillCorner/opendata/master/data
+
+skillcorner:
+	mkdir -p $(SKILLCORNER_DIR)
+	curl -fsSL -o $(SKILLCORNER_DIR)/matches.json \
+		https://raw.githubusercontent.com/SkillCorner/opendata/master/data/matches.json
+	curl -fsSL -o $(SKILLCORNER_DIR)/$(SKILLCORNER_MATCH)_match.json \
+		https://raw.githubusercontent.com/SkillCorner/opendata/master/data/matches/$(SKILLCORNER_MATCH)/$(SKILLCORNER_MATCH)_match.json
+	curl -fsSL -o $(SKILLCORNER_DIR)/$(SKILLCORNER_MATCH)_tracking.jsonl \
+		$(SKILLCORNER_REPO)/matches/$(SKILLCORNER_MATCH)/$(SKILLCORNER_MATCH)_tracking_extrapolated.jsonl
+	@echo "Fetched match $(SKILLCORNER_MATCH). Data is CC licensed by SkillCorner; credit them if you publish."
+
+benchmark: venv
+	$(PY) -m footballvisual benchmark \
+		--reference $(SKILLCORNER_DIR)/$(SKILLCORNER_MATCH)_tracking.jsonl \
+		--tracks $(DATA)/tracks.json
 
 # The sandbox reads from web/public, so the freshly generated clip and tracks
 # are copied there as the last step of the demo build.

@@ -4,6 +4,7 @@
     python -m footballvisual sprites     extract person cut-outs for the render
     python -m footballvisual track       run the vision pipeline over a video
     python -m footballvisual evaluate    score tracks.json against ground truth
+    python -m footballvisual benchmark   compare coverage to professional tracking
 """
 
 from __future__ import annotations
@@ -118,6 +119,51 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_benchmark(args: argparse.Namespace) -> int:
+    """Put this pipeline's coverage next to a commercial system's.
+
+    Deliberately not called "evaluate": it is not a score. The reference is a
+    different match on footage this repository does not have, so this establishes
+    the range a broadcast tracker operates in, not a head to head result.
+    """
+    from .reference import (
+        format_comparison,
+        load_pipeline_stats,
+        load_skillcorner_stats,
+    )
+
+    reference_path = Path(args.reference)
+    if not reference_path.exists():
+        print(
+            f"no reference data at {reference_path}.\n"
+            "Fetch it with `make skillcorner`, which pulls one match of open\n"
+            "broadcast tracking data from SkillCorner and PySport.",
+            file=sys.stderr,
+        )
+        return 1
+
+    reference = load_skillcorner_stats(reference_path, max_frames=args.max_frames)
+
+    pipeline_stats = None
+    tracks_path = Path(args.tracks) if args.tracks else None
+    if tracks_path and tracks_path.exists():
+        pipeline_stats = load_pipeline_stats(tracks_path)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "reference": reference.to_dict(),
+                    "pipeline": pipeline_stats.to_dict() if pipeline_stats else None,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(format_comparison(reference, pipeline_stats))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="footballvisual", description="Football vision to tactical map pipeline"
@@ -186,6 +232,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tracks", default=DEFAULT_DATA / "tracks.json")
     p.add_argument("--ground-truth", default=DEFAULT_DATA / "ground_truth.json")
     p.set_defaults(func=_cmd_evaluate)
+
+    p = sub.add_parser(
+        "benchmark",
+        help="compare this pipeline's coverage against professional broadcast tracking",
+    )
+    p.add_argument(
+        "--reference",
+        default=DEFAULT_DATA / "skillcorner" / "2017461_tracking.jsonl",
+        help="a SkillCorner *_tracking_extrapolated.jsonl (see `make skillcorner`)",
+    )
+    p.add_argument(
+        "--tracks",
+        default=DEFAULT_DATA / "tracks.json",
+        help="this pipeline's output to compare, or omit if it does not exist yet",
+    )
+    p.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="read only the first N reference frames, for a quick look",
+    )
+    p.add_argument("--json", action="store_true", help="emit machine-readable output")
+    p.set_defaults(func=_cmd_benchmark)
 
     return parser
 
