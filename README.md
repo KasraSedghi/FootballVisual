@@ -336,7 +336,7 @@ make test
 
 40 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
 rejection, end-to-end calibration accuracy in metres), automatic calibration, and the
-tracker. 17 TypeScript tests covering the lane solver and scoring.
+tracker. 26 TypeScript tests covering the lane solver and scoring.
 
 Two of these pin real bugs found during development, which is most of the reason to have
 them:

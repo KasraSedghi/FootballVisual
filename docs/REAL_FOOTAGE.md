@@ -77,7 +77,7 @@ the first completely. `explained_fraction` now asks the second question: the cor
 the demo clip explains 81% of its detected lines, and these two explain 9% and 6%. They are
 now correctly rejected instead of silently trusted.
 
-Four things were tried and did not fix it, each measured rather than assumed:
+Five things were tried and did not fix it, each measured rather than assumed:
 
 | Attempt | Result |
 |---|---|
