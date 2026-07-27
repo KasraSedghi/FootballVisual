@@ -33,12 +33,17 @@ render: venv
 # Calibrates from the pitch markings, so nothing has to be clicked first.
 # --camera-side resolves the pitch's mirror symmetry, which cannot be inferred
 # from the image; the renderer puts the camera on the negative-y touchline.
+# --left-goal-side resolves the pitch's other symmetry, the 180 degree
+# rotation: nothing in a single frame's markings can tell the two ends apart,
+# and there is no prior homography yet on the very first calibration to settle
+# it automatically. The renderer's camera setup puts the goal at pitch x =
+# -HALF_LENGTH toward the left of the frame.
 track: venv
 	$(PY) -m footballvisual track \
 		--video $(DATA)/broadcast.mp4 \
 		--out $(DATA)/tracks.json \
 		--ground-truth $(DATA)/ground_truth.json \
-		--auto-calibrate --camera-side minus_y
+		--auto-calibrate --camera-side minus_y --left-goal-side left
 
 # The original path, for comparison: a homography seeded from clicked pitch
 # landmarks rather than found automatically.

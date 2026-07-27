@@ -121,26 +121,26 @@ The synthetic clip knows where every player really was, so the pipeline can be s
 rather than demoed. `make demo` prints this:
 
 ```
-position MAE          0.80 m
-position p95          1.76 m
+position MAE          0.65 m
+position p95          1.64 m
 detection coverage    74.6%   (21 of 21 players matched by some track)
-identity switches     7
+identity switches     5
 team assignment       100.0%
-ball coverage         100.0%
-ball MAE              1.89 m
+ball coverage         96.4%
+ball MAE              1.56 m
 ```
 
 How to read these:
 
-- **Position MAE 0.80 m** bounds everything above it. A passing-lane margin that turns on
+- **Position MAE 0.65 m** bounds everything above it. A passing-lane margin that turns on
   distances finer than about a metre is noise, which is why the verdict thresholds are set
   in *seconds* rather than centimetres.
 - **Coverage 74.6%** counts frames, not players. Every one of the 21 on-screen players is
   followed by a track; the shortfall is frames where a player is missed and their track is
   coasting on prediction.
-- **7 identity switches** over 250 frames. Each one corrupts a trajectory from that point
+- **5 identity switches** over 250 frames. Each one corrupts a trajectory from that point
   on, so this is the number to watch when tuning.
-- **Ball MAE 1.89 m** is still the weakest number here, and it took three attempts to
+- **Ball MAE 1.56 m** is still the weakest number here, and it took three attempts to
   find out why, which is worth recording because two of them were wrong.
 
   Smoothing was not the cause: widening the window from 1 to 21 frames moved the error by
@@ -152,11 +152,11 @@ How to read these:
 
   The cause was the motion gate, which allowed the ball to jump 220 pixels between
   frames when a driven pass moves it about 0.64 m, a few tens of pixels at this scale.
-  Tightening it and scaling it with time-since-last-seen took ball error from 3.11 m to
-  1.89 m and coverage to 100%.
+  Tightening it and scaling it with time-since-last-seen took ball error from 3.11 m down
+  toward the current 1.56 m, with coverage at 96.4%.
 
 Calibrating from the markings rather than from clicked landmarks is what moved position
-MAE from 1.29 m to 0.80 m. That is not surprising in hindsight: the landmark path
+MAE from 1.29 m down toward 0.65 m. That is not surprising in hindsight: the landmark path
 simulates a human clicking with two pixels of error, and a line fit over hundreds of pixels
 of evidence beats that. Run `make track-manual` to reproduce the clicked-landmark numbers.
 
@@ -209,7 +209,8 @@ web/src/
 Calibration can run from the pitch markings alone, with nobody clicking anything:
 
 ```bash
-python -m footballvisual track --video match.mp4 --auto-calibrate --camera-side minus_y
+python -m footballvisual track --video match.mp4 --auto-calibrate --camera-side minus_y \
+    --left-goal-side left
 ```
 
 The hard part is not finding the lines, it is deciding *which* line each one is. A wrong
@@ -248,6 +249,17 @@ The rotation is reported via `rotation_ambiguous` rather than guessed at. Passin
 it once, then carry it across cuts. With a prior, every frame of the demo clip calibrates
 to within 0.33m.
 
+There is no prior on the very first calibration a video ever gets, though, and on the demo
+clip the markings visible in frame are rotation-ambiguous throughout, so without more
+information that first fit is confidently wrong end-for-end about half the time: score and
+inlier fraction both pass, `is_confident` is true, and every player lands roughly 53m from
+where they actually are. This is not hypothetical; it is what `make demo` produced before
+`--left-goal-side` existed. That flag says which screen side shows the goal at pitch
+x = `-HALF_LENGTH`, and is consulted only when there is no prior yet, exactly the
+information an operator would confirm once at kickoff. See
+`test_left_goal_side_resolves_the_rotation_ambiguity_with_no_prior` in
+`test_autocalibrate.py`.
+
 Getting the orientation sign backwards is a genuinely nasty bug, because it fails
 silently: the mirrored homography reprojects onto the real markings perfectly. It cost a
 debugging session here and is pinned by `test_camera_side_is_required_to_resolve_the_mirror`.
@@ -271,8 +283,9 @@ homography to settle the rotation ambiguity, rather than propagating across the 
 ## Known limits
 
 - **The 180 degree rotation ambiguity needs external information.** Line markings do not
-  encode which end is which. The pipeline resolves it from a prior; a real deployment would
-  resolve it from the direction of play or an operator confirming it once at kickoff.
+  encode which end is which. After the first calibration the pipeline resolves it from a
+  prior; before that, `--left-goal-side` supplies the equivalent of an operator confirming
+  it once at kickoff, or the direction of play in a real deployment.
 - **The ball is only tracked in 2D.** Height is not recovered, so a lofted pass is
   reported at its ground projection. On the two real clips ball tracking appears to fail
   outright: it reports a position on every frame, and the thing it is following is

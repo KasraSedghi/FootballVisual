@@ -287,6 +287,35 @@ def test_a_prior_resolves_the_rotation_ambiguity():
     assert error < 1.0, f"with a prior the fit should be unambiguous, was {error:.2f}m out"
 
 
+def test_left_goal_side_resolves_the_rotation_ambiguity_with_no_prior():
+    """The first calibration a video ever gets has no prior homography.
+
+    `test_a_prior_resolves_the_rotation_ambiguity` covers re-calibration after a
+    cut, where a prior exists. Before that, on frame zero, `pipeline.py` cannot
+    supply one, and without `left_goal_side` the choice between the two
+    rotations is silently arbitrary. This is the failure that put the demo
+    clip's tracking 53 metres out despite `is_confident` being True: a
+    confidently wrong end-for-end fit with no signal that anything was wrong.
+    """
+    camera = a_camera()
+    frame = render_lines_only(camera)
+
+    left_goal = np.array(pitch.goal_centre("left"))
+    true_x = project(camera.H, left_goal[None, :])[0][0]
+    true_side = "left" if true_x < camera.width / 2.0 else "right"
+    wrong_side = "right" if true_side == "left" else "left"
+
+    right = calibrate_auto(frame, camera_side="minus_y", left_goal_side=true_side)
+    wrong = calibrate_auto(frame, camera_side="minus_y", left_goal_side=wrong_side)
+    assert right is not None and wrong is not None
+    assert right.resolved_by_hint and wrong.resolved_by_hint
+
+    right_error, _ = pitch_error(right.h, camera.H, image_size=(camera.width, camera.height))
+    wrong_error, _ = pitch_error(wrong.h, camera.H, image_size=(camera.width, camera.height))
+    assert right_error < 1.0, f"correct hint should settle the fit, was {right_error:.2f}m out"
+    assert wrong_error > 5.0, "wrong hint should pick the flipped fit, not the true one"
+
+
 def test_rotating_a_fit_twice_returns_it():
     camera = a_camera()
     assert np.allclose(_rotate180(_rotate180(camera.H)), camera.H, atol=1e-9)

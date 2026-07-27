@@ -93,6 +93,7 @@ def _cmd_track(args: argparse.Namespace) -> int:
         verbose=not args.quiet,
         auto_calibrate=args.auto_calibrate,
         camera_side=args.camera_side,
+        left_goal_side=args.left_goal_side,
         detect_cuts=not args.no_cut_detection,
     )
     payload = Pipeline(config).run()
@@ -161,6 +162,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="minus_y",
         choices=["minus_y", "plus_y"],
         help="which touchline the camera is behind; resolves the pitch's mirror symmetry",
+    )
+    p.add_argument(
+        "--left-goal-side",
+        default=None,
+        choices=["left", "right"],
+        help=(
+            "which screen side shows the goal at pitch x = -HALF_LENGTH "
+            "(pitch.goal_centre('left')); breaks the pitch's 180 degree rotation "
+            "ambiguity on the very first calibration, when there is no prior "
+            "homography yet to settle it"
+        ),
     )
     p.add_argument(
         "--no-cut-detection",

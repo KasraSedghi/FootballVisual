@@ -55,6 +55,10 @@ class PipelineConfig:
     # Calibrate from the pitch markings instead of clicked landmarks.
     auto_calibrate: bool = False
     camera_side: str = "minus_y"
+    # Breaks the 180 degree rotation ambiguity on the very first calibration,
+    # when there is no prior homography yet to settle it. See
+    # `autocalibrate.calibrate_auto`.
+    left_goal_side: str | None = None
     # Detect shot changes and re-calibrate, rather than propagating a
     # homography across a cut that it cannot possibly still describe.
     detect_cuts: bool = True
@@ -199,7 +203,10 @@ class Pipeline:
             needs_calibration = h is None or cut
             if needs_calibration:
                 result = calibrate_auto(
-                    frame, camera_side=cfg.camera_side, prior_h=h
+                    frame,
+                    camera_side=cfg.camera_side,
+                    prior_h=h,
+                    left_goal_side=cfg.left_goal_side,
                 )
                 if result is not None and result.is_confident:
                     h = result.h

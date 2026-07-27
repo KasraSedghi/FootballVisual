@@ -136,6 +136,9 @@ class AutoCalibration:
     h_rotated: np.ndarray | None = None
     # True when a caller-supplied prior was used to settle that ambiguity.
     resolved_by_prior: bool = False
+    # True when `left_goal_side` was used to settle it instead, on a first
+    # calibration where no prior exists yet.
+    resolved_by_hint: bool = False
 
     @property
     def rotation_ambiguous(self) -> bool:
@@ -695,6 +698,7 @@ def calibrate_auto(
     frame: np.ndarray,
     camera_side: str = "minus_y",
     prior_h: np.ndarray | None = None,
+    left_goal_side: str | None = None,
     max_lines_per_family: int = 5,
     max_hypotheses: int = 40000,
 ) -> AutoCalibration | None:
@@ -711,8 +715,16 @@ def calibrate_auto(
     `prior_h` resolves the 180 degree ambiguity. Pass the last known good
     homography and the variant closer to it is chosen, which is what makes
     automatic re-calibration after a camera cut usable: the ambiguity is settled
-    once, then carried across cuts. Without a prior the choice between the two
-    is arbitrary, and `rotation_ambiguous` says so.
+    once, then carried across cuts.
+
+    There is no prior on the very first calibration a video ever gets, so that
+    ambiguity is otherwise picked arbitrarily by whichever candidate the search
+    happens to land on, silently. `left_goal_side` breaks that tie instead: pass
+    `"left"` or `"right"` for which screen side shows the goal at pitch x =
+    `-HALF_LENGTH` (`pitch.goal_centre("left")`), read off something outside the
+    markings, such as the direction of play or an operator's one-time
+    confirmation. It is only consulted when there is no `prior_h` yet; once a
+    prior exists it settles the question on its own.
 
     Returns None when the frame does not contain enough structure to identify.
     Callers should check `is_confident` before trusting the result, and
@@ -722,6 +734,8 @@ def calibrate_auto(
     """
     if camera_side not in ("minus_y", "plus_y"):
         raise ValueError(f"camera_side must be 'minus_y' or 'plus_y', got {camera_side!r}")
+    if left_goal_side not in (None, "left", "right"):
+        raise ValueError(f"left_goal_side must be 'left' or 'right', got {left_goal_side!r}")
     # Image y points down, so a camera on the negative-y touchline maps the
     # pitch to a negatively-oriented quad.
     orientation = -1.0 if camera_side == "minus_y" else 1.0
@@ -874,5 +888,20 @@ def calibrate_auto(
                 best.h, distance, width, height, spacing_m=FINE_SPACING_M
             )
         best.resolved_by_prior = True
+    elif left_goal_side is not None and best.h_rotated is not None:
+        # No prior yet, but the caller knows which screen side the left goal
+        # should land on. The two candidates are always on opposite sides of
+        # each other, since that is exactly what the 180 degree rotation swaps.
+        left_goal = np.array(pitch.goal_centre("left"))
+        x_h = project(best.h, left_goal[None, :])[0][0]
+        x_rotated = project(best.h_rotated, left_goal[None, :])[0][0]
+        wants_left = left_goal_side == "left"
+        rotated_matches = (x_rotated < x_h) if wants_left else (x_rotated > x_h)
+        if rotated_matches:
+            best.h, best.h_rotated = best.h_rotated, best.h
+            best.score, best.inlier_fraction = _score_homography(
+                best.h, distance, width, height, spacing_m=FINE_SPACING_M
+            )
+        best.resolved_by_hint = True
 
     return best
