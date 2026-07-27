@@ -127,22 +127,34 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     the range a broadcast tracker operates in, not a head to head result.
     """
     from .reference import (
+        aggregate_stats,
         format_comparison,
         load_pipeline_stats,
         load_skillcorner_stats,
     )
 
+    # A directory means "every match in it". One match is a fluke risk: a single
+    # fixture can have an unusually wide camera or be played in rain, either of
+    # which moves the detection rate enough to mislead.
     reference_path = Path(args.reference)
-    if not reference_path.exists():
+    if reference_path.is_dir():
+        files = sorted(reference_path.glob("*_tracking.jsonl"))
+    elif reference_path.exists():
+        files = [reference_path]
+    else:
+        files = []
+
+    if not files:
         print(
             f"no reference data at {reference_path}.\n"
-            "Fetch it with `make skillcorner`, which pulls one match of open\n"
-            "broadcast tracking data from SkillCorner and PySport.",
+            "Fetch it with `make skillcorner`, which pulls open broadcast\n"
+            "tracking data published by SkillCorner and PySport.",
             file=sys.stderr,
         )
         return 1
 
-    reference = load_skillcorner_stats(reference_path, max_frames=args.max_frames)
+    runs = [load_skillcorner_stats(f, max_frames=args.max_frames) for f in files]
+    reference = runs[0] if len(runs) == 1 else aggregate_stats(runs)
 
     pipeline_stats = None
     tracks_path = Path(args.tracks) if args.tracks else None
@@ -239,8 +251,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--reference",
-        default=DEFAULT_DATA / "skillcorner" / "2017461_tracking.jsonl",
-        help="a SkillCorner *_tracking_extrapolated.jsonl (see `make skillcorner`)",
+        default=DEFAULT_DATA / "skillcorner",
+        help=(
+            "a SkillCorner *_tracking.jsonl, or a directory of them, in which "
+            "case every match found is aggregated (see `make skillcorner`)"
+        ),
     )
     p.add_argument(
         "--tracks",

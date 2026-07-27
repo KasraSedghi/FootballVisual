@@ -111,6 +111,37 @@ def load_skillcorner_stats(path: Path, max_frames: int | None = None) -> Referen
     )
 
 
+def aggregate_stats(runs: list[ReferenceStats]) -> ReferenceStats:
+    """Combine several matches into one baseline.
+
+    One match is a fluke risk. A single fixture can be an unusually wide camera,
+    an unusually static one, or played in rain, and any of those would move the
+    detection rate enough to mislead. Averaging over matches is what turns this
+    from an anecdote into a range.
+
+    Frame-weighted rather than match-weighted, because a match with twice the
+    frames genuinely carries twice the evidence about what a broadcast tracker
+    recovers, and treating a short match as equally informative would be a
+    choice made for arithmetic convenience rather than for a reason.
+    """
+    if not runs:
+        raise ValueError("no runs to aggregate")
+
+    total = sum(r.frames for r in runs)
+    weighted = lambda pick: sum(pick(r) * r.frames for r in runs) / total  # noqa: E731
+
+    return ReferenceStats(
+        source=f"{len(runs)} matches, {total} frames",
+        frames=total,
+        players_reported_median=float(np.median([r.players_reported_median for r in runs])),
+        players_detected_median=float(np.median([r.players_detected_median for r in runs])),
+        players_detected_mean=weighted(lambda r: r.players_detected_mean),
+        detection_rate_mean=weighted(lambda r: r.detection_rate_mean),
+        detection_rate_median=float(np.median([r.detection_rate_median for r in runs])),
+        ball_detection_rate=weighted(lambda r: r.ball_detection_rate),
+    )
+
+
 @dataclass
 class PipelineStats:
     """The comparable numbers, read back out of this pipeline's own output."""

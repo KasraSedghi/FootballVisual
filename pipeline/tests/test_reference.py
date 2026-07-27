@@ -113,3 +113,50 @@ def test_comparison_says_plainly_that_it_is_not_a_score(tmp_path):
     text = format_comparison(reference, None)
     assert "not as a score" in text
     assert "different match" in text
+
+
+def test_aggregate_weights_matches_by_frames_not_equally(tmp_path):
+    """A longer match carries more evidence, so it should count for more.
+
+    Averaging match means equally would let a 40 frame fixture move the baseline
+    as much as a 40,000 frame one. That is a choice made for arithmetic
+    convenience rather than for a reason, and the baseline is the whole point of
+    this module.
+    """
+    from footballvisual.reference import aggregate_stats
+
+    short = load_skillcorner_stats(
+        write_jsonl(tmp_path / "a.jsonl", [frame(0, 10, 10, True)])
+    )
+    long = load_skillcorner_stats(
+        write_jsonl(tmp_path / "b.jsonl", [frame(i, 10, 0, False) for i in range(9)])
+    )
+
+    combined = aggregate_stats([short, long])
+
+    assert combined.frames == 10
+    # Frame weighted: one frame at 100% and nine at 0% is 10%, not the 50% an
+    # unweighted mean of the two matches would give.
+    assert combined.detection_rate_mean == pytest.approx(0.1)
+    assert combined.ball_detection_rate == pytest.approx(0.1)
+
+
+def test_aggregate_reports_how_many_matches_it_read(tmp_path):
+    """The source line has to say the baseline is not one fixture."""
+    from footballvisual.reference import aggregate_stats
+
+    runs = [
+        load_skillcorner_stats(
+            write_jsonl(tmp_path / f"{i}.jsonl", [frame(0, 22, 11, True)])
+        )
+        for i in range(3)
+    ]
+    combined = aggregate_stats(runs)
+    assert "3 matches" in combined.source
+
+
+def test_aggregate_refuses_an_empty_list():
+    from footballvisual.reference import aggregate_stats
+
+    with pytest.raises(ValueError, match="no runs"):
+        aggregate_stats([])
