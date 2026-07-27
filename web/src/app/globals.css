@@ -17,6 +17,66 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/*
+ * Semantic colour, and the single source for it.
+ *
+ * In this app colour is not decoration, it is an encoding: green means the
+ * interception race says the ball wins, blue means team A, amber means the
+ * offside line. The same encoding has to appear in three places that speak
+ * different languages, and before these tokens existed each place carried its
+ * own copy:
+ *
+ *   - Tailwind utilities in the panels
+ *   - `fill` and `stroke` attributes on the SVG pitch
+ *   - raw RGB channels written into the space-control heatmap's ImageData
+ *
+ * They had already drifted. An open lane was drawn green-500 on the map and
+ * emerald-400 in the panel listing that same lane, which is a real defect,
+ * because the panel is supposed to be the audit trail for the map.
+ *
+ * Declaring them here fixes that at the root. Tailwind emits each one as a
+ * `:root` custom property *and* as a utility class, so the panels get
+ * `text-verdict-open` and the SVG gets `var(--color-verdict-open)` from one
+ * definition. The canvas resolves them at runtime through `readToken` in
+ * PitchView, because ImageData needs numeric channels and cannot take a var.
+ *
+ * A plain `@theme` rather than `@theme inline`: inline substitutes the literal
+ * value into the utility and is what you want for a token defined in terms of
+ * another var, but the runtime `:root` property is exactly what the SVG and the
+ * canvas need here.
+ */
+@theme {
+  /* Teams. Blue and red rather than the kit colours, which vary by fixture. */
+  --color-team-a: #3b82f6;
+  --color-team-b: #ef4444;
+
+  /*
+   * Roles drawn distinctly because they are excluded from the team shape
+   * metrics, and a reader should be able to see that the block being measured
+   * does not include them.
+   */
+  --color-role-keeper: #22d3ee;
+  --color-role-referee: #facc15;
+  --color-role-other: #a78bfa;
+  --color-role-unknown: #94a3b8;
+
+  /* Passing lane verdicts, straight off the interception race. */
+  --color-verdict-open: #22c55e;
+  --color-verdict-contested: #f59e0b;
+  --color-verdict-blocked: #6b7280;
+
+  /* Pitch markings the engine derives rather than the pitch itself. */
+  --color-marker-offside: #fbbf24;
+  --color-marker-defline: #ef4444;
+
+  /*
+   * Retrieval. Deliberately outside the tactical palette: a similarity score is
+   * a statement about the clip, not about the situation on the pitch, and
+   * borrowing green or amber here would imply a verdict it is not making.
+   */
+  --color-retrieval: #38bdf8;
+}
+
 html,
 body {
   background: var(--background);

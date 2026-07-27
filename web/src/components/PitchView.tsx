@@ -34,23 +34,48 @@ interface Props {
   onSelectPlayer: (id: number | null) => void;
 }
 
+/*
+ * Every colour below is a reference to a token in globals.css, never a literal.
+ * SVG resolves `var()` in a paint attribute natively, so the map and the panels
+ * cannot drift apart the way they previously had.
+ */
 const TEAM_FILL: Record<string, string> = {
-  team_a: "#3b82f6",
-  team_b: "#ef4444",
-  // Keepers and officials are drawn distinctly because they are excluded from
-  // the team shape metrics, and a reader should be able to see that the block
-  // being measured does not include them.
-  keeper: "#22d3ee",
-  referee: "#facc15",
-  other: "#a78bfa",
-  unknown: "#94a3b8",
+  team_a: "var(--color-team-a)",
+  team_b: "var(--color-team-b)",
+  keeper: "var(--color-role-keeper)",
+  referee: "var(--color-role-referee)",
+  other: "var(--color-role-other)",
+  unknown: "var(--color-role-unknown)",
 };
 
 const LANE_STROKE: Record<string, string> = {
-  open: "#22c55e",
-  contested: "#f59e0b",
-  blocked: "#6b7280",
+  open: "var(--color-verdict-open)",
+  contested: "var(--color-verdict-contested)",
+  blocked: "var(--color-verdict-blocked)",
 };
+
+const OFFSIDE = "var(--color-marker-offside)";
+const DEF_LINE = "var(--color-marker-defline)";
+
+/**
+ * Resolve a colour token to RGB channels for the canvas.
+ *
+ * The space-control heatmap writes into an ImageData buffer, which takes
+ * numbers and cannot take a `var()`. Reading the computed property is what
+ * keeps it on the same definition as everything else rather than carrying a
+ * third hardcoded copy of the team colours, which is what it did before.
+ *
+ * Falls back to mid grey if the property is missing or not a hex triple, so a
+ * token rename degrades to a visibly wrong heatmap rather than a crash.
+ */
+function readToken(name: string): [number, number, number] {
+  if (typeof window === "undefined") return [128, 128, 128];
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const hex = /^#([0-9a-f]{6})$/i.exec(raw);
+  if (!hex) return [128, 128, 128];
+  const n = parseInt(hex[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
 
 export default function PitchView({
   report,
@@ -128,21 +153,18 @@ export default function PitchView({
     if (!bctx) return;
 
     const image = bctx.createImageData(space.cols, space.rows);
+    const teamA = readToken("--color-team-a");
+    const teamB = readToken("--color-team-b");
     for (let r = 0; r < space.rows; r++) {
       for (let c = 0; c < space.cols; c++) {
         // Grid row 0 is the -y touchline; screen row 0 is +y. Flip on write.
         const v = space.grid[(space.rows - 1 - r) * space.cols + c];
         const i = (r * space.cols + c) * 4;
         const strength = Math.min(1, Math.abs(v));
-        if (v < 0) {
-          image.data[i] = 59;
-          image.data[i + 1] = 130;
-          image.data[i + 2] = 246;
-        } else {
-          image.data[i] = 239;
-          image.data[i + 1] = 68;
-          image.data[i + 2] = 68;
-        }
+        const [red, green, blue] = v < 0 ? teamA : teamB;
+        image.data[i] = red;
+        image.data[i + 1] = green;
+        image.data[i + 2] = blue;
         image.data[i + 3] = Math.round(strength * 86);
       }
     }
@@ -235,7 +257,7 @@ export default function PitchView({
             refY="3.5"
             orient="auto"
           >
-            <polygon points="0 0, 7 3.5, 0 7" fill="#fbbf24" />
+            <polygon points="0 0, 7 3.5, 0 7" fill={OFFSIDE} />
           </marker>
           <marker id="laneend" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
             <polygon points="0 0, 6 3, 0 6" fill="currentColor" />
@@ -269,8 +291,8 @@ export default function PitchView({
         {showShape && report?.block && (
           <>
             {[
-              { x: report.block.defensiveLineX, label: "def line", colour: "#ef4444" },
-              { x: report.block.offsideLineX, label: "offside", colour: "#fbbf24" },
+              { x: report.block.defensiveLineX, label: "def line", colour: DEF_LINE },
+              { x: report.block.offsideLineX, label: "offside", colour: OFFSIDE },
             ].map((l, i) => {
               const a = transform.toScreen(l.x, -34);
               const b = transform.toScreen(l.x, 34);
@@ -322,7 +344,7 @@ export default function PitchView({
               y1={from.sy}
               x2={to.sx}
               y2={to.sy}
-              stroke="#fbbf24"
+              stroke={OFFSIDE}
               strokeWidth={2.2}
               markerEnd="url(#arrowhead)"
             />
@@ -335,7 +357,7 @@ export default function PitchView({
             y1={transform.toScreen(arrowStart.x, arrowStart.y).sy}
             x2={transform.toScreen(arrowEnd.x, arrowEnd.y).sx}
             y2={transform.toScreen(arrowEnd.x, arrowEnd.y).sy}
-            stroke="#fbbf24"
+            stroke={OFFSIDE}
             strokeWidth={2}
             strokeDasharray="4 3"
             markerEnd="url(#arrowhead)"
@@ -364,8 +386,8 @@ export default function PitchView({
                 }
               }}
             >
-              {between && <circle r={11} fill="none" stroke="#22c55e" strokeWidth={1.4} opacity={0.9} />}
-              {beyond && <circle r={13} fill="none" stroke="#fbbf24" strokeWidth={1} opacity={0.8} />}
+              {between && <circle r={11} fill="none" stroke={LANE_STROKE.open} strokeWidth={1.4} opacity={0.9} />}
+              {beyond && <circle r={13} fill="none" stroke={OFFSIDE} strokeWidth={1} opacity={0.8} />}
               <circle
                 r={isCarrier ? 8 : 6.5}
                 fill={TEAM_FILL[p.team] ?? TEAM_FILL.unknown}

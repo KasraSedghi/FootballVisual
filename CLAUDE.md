@@ -175,6 +175,18 @@ Changing any of these without understanding the reason will regress something me
 - **Everything downstream of the homography speaks pitch metres**, origin at the centre
   spot, +x toward the right-hand goal. Convert to screen space only at the moment of
   drawing.
+- **Semantic colour comes from the tokens in `globals.css`, and a UI change updates them
+  in the same commit.** In this app colour is an encoding, not decoration: green is the
+  interception race's verdict, blue and red are the teams, amber is the offside line. That
+  encoding has to appear in three languages at once, Tailwind utilities in the panels,
+  `fill`/`stroke` on the SVG pitch, and raw RGB channels in the heatmap's `ImageData`, so
+  a literal written into any one of them is a fourth source of truth waiting to drift.
+  It already had: an open lane was drawn green-500 on the map and listed emerald-400 in
+  the panel that is supposed to be the map's audit trail. Use `text-verdict-open` in a
+  panel, `var(--color-verdict-open)` in SVG, and `readToken()` for canvas. Neutral chrome
+  (slate) and app-level roles (emerald for the primary action, red for errors) stay on
+  Tailwind's own scale, because those are not tactical claims and aliasing them would add
+  indirection without preventing a bug.
 - **`pitch.py` is the single source of truth for pitch geometry.** `web/src/lib/pitch.ts`
   mirrors those constants because the two runtimes cannot share a module. If you change
   one, change both.

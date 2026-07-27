@@ -482,7 +482,7 @@ export default function SandboxPage() {
               </span>
               <span>
                 Open lanes:{" "}
-                <span className="text-emerald-400">
+                <span className="text-verdict-open">
                   {report.lanes.filter((l) => l.verdict === "open").length}
                 </span>{" "}
                 of {report.lanes.length}

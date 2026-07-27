@@ -35,10 +35,16 @@ interface Props {
  */
 const FOCUS_LANES = 3;
 
+/*
+ * The same tokens the map draws each lane with. These previously named their
+ * own colours, and had drifted: a lane drawn green-500 on the pitch was listed
+ * as emerald-400 here, in the panel whose whole job is to be the audit trail
+ * for what the map shows.
+ */
 const VERDICT_STYLE: Record<string, string> = {
-  open: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10",
-  contested: "text-amber-400 border-amber-500/40 bg-amber-500/10",
-  blocked: "text-slate-400 border-slate-600/40 bg-slate-600/10",
+  open: "text-verdict-open border-verdict-open/40 bg-verdict-open/10",
+  contested: "text-verdict-contested border-verdict-contested/40 bg-verdict-contested/10",
+  blocked: "text-verdict-blocked border-verdict-blocked/40 bg-verdict-blocked/10",
 };
 
 export default function TacticsPanel({
@@ -162,11 +168,11 @@ export default function TacticsPanel({
           </h3>
           <div className="flex h-3 overflow-hidden rounded-full bg-slate-800">
             <div
-              className="bg-blue-500"
+              className="bg-team-a"
               style={{ width: `${(space.teamAShare * 100).toFixed(1)}%` }}
             />
             <div
-              className="bg-red-500"
+              className="bg-team-b"
               style={{ width: `${(space.teamBShare * 100).toFixed(1)}%` }}
             />
           </div>
@@ -186,12 +192,12 @@ export default function TacticsPanel({
           report.playersBeyondLine.length > 0) && (
         <section className="rounded-lg border border-white/10 bg-slate-900/50 p-4 text-xs">
           {report.playersBetweenLines.length > 0 && (
-            <p className="text-emerald-400">
+            <p className="text-verdict-open">
               Between the lines: {report.playersBetweenLines.map((id) => `#${id}`).join(", ")}
             </p>
           )}
           {report.playersBeyondLine.length > 0 && (
-            <p className="mt-1 text-amber-400">
+            <p className="mt-1 text-marker-offside">
               Beyond the last line: {report.playersBeyondLine.map((id) => `#${id}`).join(", ")}
             </p>
           )}

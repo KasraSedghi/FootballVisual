@@ -205,7 +205,7 @@ export default function SearchPanel({ session, onSeek, currentIndex }: Props) {
           type="button"
           onClick={findLikeThis}
           disabled={!session}
-          className="w-full rounded border border-sky-500/40 bg-sky-500/10 px-2.5 py-1.5 text-[11px] text-sky-300 transition hover:bg-sky-500/20 disabled:opacity-40"
+          className="w-full rounded border border-retrieval/40 bg-retrieval/10 px-2.5 py-1.5 text-[11px] text-retrieval transition hover:bg-retrieval/20 disabled:opacity-40"
         >
           Moments like this frame
         </button>
@@ -289,7 +289,7 @@ export default function SearchPanel({ session, onSeek, currentIndex }: Props) {
                     <span>width {s.peak.measurements.blockWidthM.toFixed(0)}m</span>
                   )}
                   {s.peak.measurements.playersBetweenLines > 0 && (
-                    <span className="text-emerald-400">
+                    <span className="text-verdict-open">
                       {s.peak.measurements.playersBetweenLines} between lines
                     </span>
                   )}
@@ -338,7 +338,7 @@ export default function SearchPanel({ session, onSeek, currentIndex }: Props) {
                         [0, 1] renders every result nearly full. Three decimal
                         places separate them; a bar hides that they differ.
                       */}
-                      <span className="font-mono text-sky-300">
+                      <span className="font-mono text-retrieval">
                         {m.similarity.toFixed(3)}
                       </span>
                     </div>
