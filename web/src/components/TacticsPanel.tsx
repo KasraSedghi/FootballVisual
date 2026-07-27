@@ -59,8 +59,13 @@ export default function TacticsPanel({
   const shownLanes = detailed ? lanes.slice(0, 7) : lanes.slice(0, FOCUS_LANES);
   const hiddenLanes = lanes.length - shownLanes.length;
 
+  /*
+   * A fragment, not a wrapping div. The parent lays these sections out: it
+   * stacks them in focus view and flows them into a two column grid in detail
+   * view, and it can only do the second if each section is a direct child.
+   */
   return (
-    <div className="space-y-4">
+    <>
       <section className="rounded-lg border border-white/10 bg-slate-900/50 p-4">
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
           Passing options
@@ -115,10 +120,17 @@ export default function TacticsPanel({
             })}
           </ul>
         )}
+        {/*
+          The sentence below is built as one string rather than interleaved
+          with JSX expressions. The interleaved form rendered as
+          "optionshidden": JSX drops the whitespace between an expression and
+          the text following it when the line wraps, which is invisible in the
+          source and obvious on screen.
+        */}
         {hiddenLanes > 0 && (
           <p className="mt-2 text-[11px] text-slate-500">
-            {hiddenLanes} lower ranked option{hiddenLanes > 1 ? "s" : ""} hidden. Use
-            &ldquo;All measurements&rdquo; to see them.
+            {`${hiddenLanes} lower ranked option${hiddenLanes > 1 ? "s" : ""} hidden. ` +
+              `Use "All measurements" to see them.`}
           </p>
         )}
       </section>
@@ -185,7 +197,7 @@ export default function TacticsPanel({
           )}
         </section>
       )}
-    </div>
+    </>
   );
 }
 

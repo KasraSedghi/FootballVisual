@@ -286,7 +286,20 @@ export default function PitchView({
                     strokeDasharray="3 5"
                     opacity={0.75}
                   />
-                  <text x={a.sx + 3} y={a.sy - 5} fill={l.colour} fontSize={9} opacity={0.85}>
+                  {/*
+                    Stacked, not both on the baseline. The offside line sits at
+                    the second-deepest defender and the defensive line at the
+                    deepest, so the two are a metre or two apart in the normal
+                    case and their labels overlap into an unreadable smear. That
+                    is the common case here rather than an edge one.
+                  */}
+                  <text
+                    x={a.sx + 3}
+                    y={a.sy - 5 - i * 11}
+                    fill={l.colour}
+                    fontSize={9}
+                    opacity={0.85}
+                  >
                     {l.label}
                   </text>
                 </g>

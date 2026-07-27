@@ -171,7 +171,9 @@ export default function SearchPanel({ session, onSeek }: Props) {
                   <span className="font-mono text-slate-200">
                     {formatTime(s.startTimeS)} to {formatTime(s.endTimeS)}
                   </span>
-                  <span className="text-slate-500">{s.frameCount} frames</span>
+                  <span className="text-slate-500">
+                    {`${s.frameCount} frame${s.frameCount === 1 ? "" : "s"}`}
+                  </span>
                 </div>
                 <div className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-slate-400">
                   <span>

@@ -262,7 +262,19 @@ export default function SandboxPage() {
         </div>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+      {/*
+        The sidebar widens in detail mode rather than growing taller. Stacking
+        every measurement into one 380px column ran the page to 3,700px with a
+        dead column beside it, which is the same wall the focus view exists to
+        avoid, just rotated. Two columns of panels fit the height of the map.
+      */}
+      <div
+        className={`grid gap-4 ${
+          detailed
+            ? "lg:grid-cols-[minmax(0,1fr)_760px]"
+            : "lg:grid-cols-[minmax(0,1fr)_380px]"
+        }`}
+      >
         <div className="space-y-3">
           <div className="grid gap-3 xl:grid-cols-2">
             <div className="overflow-hidden rounded-lg border border-white/10 bg-black">
@@ -479,7 +491,13 @@ export default function SandboxPage() {
           )}
         </div>
 
-        <aside className="space-y-4">
+        <aside
+          className={
+            detailed
+              ? "grid content-start gap-4 xl:grid-cols-2 [&>*]:min-w-0"
+              : "space-y-4"
+          }
+        >
           <SearchPanel
             session={session}
             onSeek={(i) => {
