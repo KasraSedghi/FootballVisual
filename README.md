@@ -627,10 +627,11 @@ model, and none of those are things this project has measured.
 make test
 ```
 
-52 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
+81 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
 rejection, end-to-end calibration accuracy in metres), automatic calibration, the tracker,
-and the comparison to professional tracking. 63 TypeScript tests covering the lane solver,
-scoring, clip retrieval, and the scout's agent loop.
+the comparison to professional tracking, and the two valuation models. 94 TypeScript tests
+covering the lane solver, scoring, clip retrieval, similarity retrieval, action valuation,
+and the scout's agent loop.
 
 The scout's loop is tested against a scripted model rather than a live one, so the suite
 still needs no API key. What that pins is the plumbing that fails silently: that tool
@@ -649,3 +650,18 @@ The calibration suite also carries a note about its own limits. Every test in it
 calibrate a frame of flat grass and clean lines, and a change that put the demo clip 79
 metres out left all of them green. There is now a test against a fully rendered frame, and
 its docstring says plainly that this was still not what caught the bug.
+
+## Data and credits
+
+This project trains on and benchmarks against open data published by others. None of it
+is redistributed here; every dataset is fetched on demand by an explicit `make` target,
+and the only committed derivatives are two small model files.
+
+- **[StatsBomb open data](https://github.com/statsbomb/open-data)**, used to train the
+  Expected Threat grid (597 matches) and to fit pass completion against 360 freeze frames
+  (45,530 passes). Fetched by `make train-models`. Data provided by StatsBomb.
+- **[SkillCorner and PySport open data](https://github.com/SkillCorner/opendata)**, used
+  as the commercial tracking baseline this project's coverage numbers are read against.
+  Fetched by `make skillcorner`. CC licensed by SkillCorner.
+
+If you publish anything derived from this repo, credit both.
