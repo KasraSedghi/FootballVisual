@@ -9,7 +9,15 @@
  * over.
  */
 
-import type { TacticalReport } from "@/lib/tactics";
+import { useState } from "react";
+
+import {
+  BLOCKED_MARGIN_S,
+  COMPLETION_MODEL,
+  OPEN_MARGIN_S,
+  XT_MODEL,
+  type TacticalReport,
+} from "@/lib/tactics";
 import { teamLabel } from "@/lib/session";
 
 interface Props {
@@ -47,12 +55,141 @@ const VERDICT_STYLE: Record<string, string> = {
   blocked: "text-verdict-blocked border-verdict-blocked/40 bg-verdict-blocked/10",
 };
 
+/**
+ * What each number on a lane row means.
+ *
+ * Every one of these is a term of art, and the panel showed six of them with no
+ * way to find out what any of them measured. "bypasses 3" is either the most
+ * useful number on the row or noise, depending entirely on whether you know it
+ * counts defenders the pass takes out of the game.
+ *
+ * Written as an ordinary explanation rather than a formula, because the person
+ * who needs it is the one who does not already know. The thresholds come from
+ * the engine rather than being retyped, so the legend cannot end up confidently
+ * describing a rule the code no longer follows.
+ */
+const LANE_TERMS: { term: string; meaning: string }[] = [
+  {
+    term: "verdict",
+    meaning:
+      `whether the pass survives the race. Blocked below ${BLOCKED_MARGIN_S.toFixed(2)}s, ` +
+      `open above ${OPEN_MARGIN_S.toFixed(2)}s, contested between.`,
+  },
+  {
+    term: "margin",
+    meaning:
+      "seconds the ball beats the best placed defender to the most dangerous " +
+      "point on its path. Negative means that defender gets there first, so " +
+      "the pass can be cut out.",
+  },
+  {
+    term: "length",
+    meaning: "how far the ball actually travels, in metres.",
+  },
+  {
+    term: "gains",
+    meaning:
+      "ground gained toward the goal being attacked. Negative is a pass that " +
+      "goes backwards, which is a normal and often correct thing to do.",
+  },
+  {
+    term: "bypasses",
+    meaning:
+      "defenders the ball ends up behind, so how many the pass takes out of " +
+      "the game. This is what separates a sideways ball from a line breaking one.",
+  },
+];
+
+/**
+ * Lateral gap in the last line above which the number is called out.
+ *
+ * Roughly the width a runner can attack before either centre back closes it.
+ * Named rather than inline so the legend below states the same threshold the
+ * highlight uses.
+ */
+const WIDE_GAP_M = 12;
+
+const BLOCK_TERMS: { term: string; meaning: string }[] = [
+  {
+    term: "players",
+    meaning:
+      "how many outfielders make up the block. Keepers are excluded, because " +
+      "one standing 40m behind the line would stretch every other number here.",
+  },
+  {
+    term: "hull area",
+    meaning:
+      "ground enclosed by stretching a band around the outermost defenders. " +
+      "Small is compact, large is a team spread thin.",
+  },
+  {
+    term: "width",
+    meaning: "how far the block spans across the pitch, touchline to touchline.",
+  },
+  {
+    term: "depth",
+    meaning:
+      "distance from the deepest defender to the highest one. A deep number " +
+      "means the lines are strung out, which is where space between them comes from.",
+  },
+  {
+    term: "back line",
+    meaning:
+      "where the last line sits, as a pitch coordinate. The origin is the " +
+      "centre spot, so negative is inside their own half and positive is up the pitch.",
+  },
+  {
+    term: "largest gap",
+    meaning:
+      `the biggest sideways space between two adjacent defenders in the last ` +
+      `line, which is where a run gets played through. Called out above ${WIDE_GAP_M}m.`,
+  },
+];
+
+const VALUE_TERMS: { term: string; meaning: string }[] = [
+  {
+    term: "if it lands",
+    meaning:
+      "how dangerous the target position is, times the chance the pass gets " +
+      "there. The first number is Expected Threat, the probability a " +
+      "possession from there ends in a goal.",
+  },
+  {
+    term: "xT",
+    meaning:
+      "the two multiplied, less the value of where the ball already is. It is " +
+      "what the pass is worth. Negative is common and correct: a safe square " +
+      "ball keeps possession and gives up the position it started from.",
+  },
+];
+
+function Legend({ heading, terms }: { heading: string; terms: typeof LANE_TERMS }) {
+  return (
+    <div>
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        {heading}
+      </p>
+      <dl className="space-y-1.5">
+        {terms.map(({ term, meaning }) => (
+          <div key={term}>
+            <dt className="inline font-semibold text-slate-300">{term}</dt>
+            <dd className="inline text-slate-400"> {meaning}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 export default function TacticsPanel({
   report,
   selectedLaneId,
   onSelectLane,
   detailed = false,
 }: Props) {
+  const [isLegendOpen, setIsLegendOpen] = useState(false);
+  const [isBlockLegendOpen, setIsBlockLegendOpen] = useState(false);
+
   if (!report) {
     return (
       <div className="rounded-lg border border-white/10 bg-slate-900/50 p-4 text-sm text-slate-400">
@@ -73,9 +210,35 @@ export default function TacticsPanel({
   return (
     <>
       <section className="rounded-lg border border-white/10 bg-slate-900/50 p-4">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Passing options
-        </h3>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Passing options
+          </h3>
+          <button
+            type="button"
+            onClick={() => setIsLegendOpen((open) => !open)}
+            aria-expanded={isLegendOpen}
+            className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400 transition hover:border-white/25 hover:text-slate-200"
+          >
+            {isLegendOpen ? "hide" : "what do these mean?"}
+          </button>
+        </div>
+
+        {isLegendOpen && (
+          <div className="mb-3 space-y-3 rounded border border-white/10 bg-slate-950/60 p-3 text-[11px] leading-relaxed">
+            <Legend heading="Geometry" terms={LANE_TERMS} />
+            {lanes.some((lane) => lane.value) && (
+              <Legend heading="Value" terms={VALUE_TERMS} />
+            )}
+            <p className="border-t border-white/10 pt-2 text-[10px] leading-relaxed text-slate-500">
+              {`Every number here is computed from the frame, never estimated by a ` +
+                `model. The threat grid is counted off ${XT_MODEL.matches} matches and the ` +
+                `completion rate is fitted to ${COMPLETION_MODEL.passes.toLocaleString()} real passes ` +
+                `whose outcomes are known.`}
+            </p>
+          </div>
+        )}
+
         {report.carrierId == null ? (
           <p className="text-sm text-slate-400">
             No player is close enough to the ball to be carrying it in this frame.
@@ -174,9 +337,19 @@ export default function TacticsPanel({
 
       {detailed && block && (
         <section className="rounded-lg border border-white/10 bg-slate-900/50 p-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-            {teamLabel(report.defendingTeam)} block
-          </h3>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              {teamLabel(report.defendingTeam)} block
+            </h3>
+            <button
+              type="button"
+              onClick={() => setIsBlockLegendOpen((open) => !open)}
+              aria-expanded={isBlockLegendOpen}
+              className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400 transition hover:border-white/25 hover:text-slate-200"
+            >
+              {isBlockLegendOpen ? "hide" : "what do these mean?"}
+            </button>
+          </div>
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
             <Metric label="Players" value={String(block.playerCount)} />
             <Metric label="Hull area" value={`${Math.round(block.hullAreaM2)} m²`} />
@@ -186,9 +359,14 @@ export default function TacticsPanel({
             <Metric
               label="Largest gap"
               value={`${block.largestBackLineGapM.toFixed(1)} m`}
-              highlight={block.largestBackLineGapM > 12}
+              highlight={block.largestBackLineGapM > WIDE_GAP_M}
             />
           </dl>
+          {isBlockLegendOpen && (
+            <div className="mt-3 rounded border border-white/10 bg-slate-950/60 p-3 text-[11px] leading-relaxed">
+              <Legend heading="Shape" terms={BLOCK_TERMS} />
+            </div>
+          )}
         </section>
       )}
 

@@ -30,7 +30,17 @@ import { DEFAULT_MOTION } from "./types";
 
 export * from "./types";
 export * from "./geometry";
-export { analysePassingLanes, interceptionMargin, estimateVelocities, scoreLane } from "./lanes";
+export {
+  analysePassingLanes,
+  interceptionMargin,
+  estimateVelocities,
+  scoreLane,
+  // Exported so the UI can state the verdict thresholds without retyping them.
+  // A legend that quotes a number the engine no longer uses is worse than no
+  // legend, because it is a confident explanation of the wrong thing.
+  OPEN_MARGIN_S,
+  BLOCKED_MARGIN_S,
+} from "./lanes";
 export { threatAt, threatDelta, XT_MODEL } from "./xt";
 export type { ActionValue, OffBallValue } from "./types";
 export {
