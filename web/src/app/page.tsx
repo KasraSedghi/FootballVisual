@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AgentPanel from "@/components/AgentPanel";
 import ClipLoader from "@/components/ClipLoader";
 import PitchView, { type PitchTool } from "@/components/PitchView";
+import SearchPanel from "@/components/SearchPanel";
 import TacticsPanel from "@/components/TacticsPanel";
 import {
   applyOverrides,
@@ -479,6 +480,13 @@ export default function SandboxPage() {
         </div>
 
         <aside className="space-y-4">
+          <SearchPanel
+            session={session}
+            onSeek={(i) => {
+              setPlaying(false);
+              setIndex(i);
+            }}
+          />
           <AgentPanel report={report} edited={edited} />
           <TacticsPanel
             report={report}
