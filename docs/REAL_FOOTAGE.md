@@ -109,8 +109,16 @@ other. Over 150 frames each:
 | Distinct track ids | 38 | 7 |
 | Ids alive for at least half the clip | 8 | 3 |
 
-Against roughly 20 and 14 players visible. So the tighter framing recovers most of the
-players and the wider one recovers a fifth of them. 38 ids for 12 concurrent tracks also
+Against roughly 20 and 14 players visible.
+
+**Read the tighter clip's number against the commercial baseline before calling it a
+shortfall.** A professional broadcast tracking system detects a median of 13 players per
+frame and a mean of 51% of the squad, measured over a full match of open SkillCorner data
+(see the comparison section in the README, or run `make benchmark`). A median of 12 here
+is in that range. The wider clip, at 3, genuinely is not.
+
+So the tighter framing recovers about what the state of the art recovers, and the wider
+one recovers a fifth of them. 38 ids for 12 concurrent tracks also
 says identity churn is much higher than on the synthetic clip, where 21 players produced 7
 switches over 250 frames.
 
@@ -153,7 +161,8 @@ a jump to a different white blob.
 
 So the honest statement is that ball tracking is unverified on real footage and the
 evidence available points at it being wrong. It cannot be scored properly without ground
-truth. This is unsurprising for a detector built around small, near-circular, bright blobs
+truth. The commercial baseline settles the direction of the error though: a professional
+system sees the ball in **78.9%** of frames, so 100% was never a number to aim for. This is unsurprising for a detector built around small, near-circular, bright blobs
 on a pitch where the players are 17 pixels tall.
 
 ### Cut detection works

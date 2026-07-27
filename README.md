@@ -137,7 +137,8 @@ How to read these:
   in *seconds* rather than centimetres.
 - **Coverage 74.6%** counts frames, not players. Every one of the 21 on-screen players is
   followed by a track; the shortfall is frames where a player is missed and their track is
-  coasting on prediction.
+  coasting on prediction. For what that number is worth against a commercial system, see
+  [Comparison to professional tracking](#comparison-to-professional-tracking).
 - **8 identity switches** over 250 frames. Each one corrupts a trajectory from that point
   on, so this is the number to watch when tuning.
 - **Ball MAE 1.85 m** is still the weakest number here, and it took three attempts to
@@ -161,6 +162,49 @@ simulates a human clicking with two pixels of error, and a line fit over hundred
 of evidence beats that. Run `make track-manual` to reproduce the clicked-landmark numbers.
 
 Run `make evaluate` to re-score an existing `tracks.json`.
+
+## Comparison to professional tracking
+
+Those numbers are measured on this project's own synthetic clip, which makes them honest
+but not comparable. "74.6% coverage" tells you nothing on its own, because there is no way
+to know whether the missing quarter is a defect here or simply what broadcast footage
+gives you.
+
+[SkillCorner and PySport](https://github.com/SkillCorner/opendata) publish ten matches of
+broadcast tracking data from a commercial system that clubs actually buy. Every player
+carries an `is_detected` flag separating the frames where they were genuinely seen from
+the frames where the position was extrapolated, and that flag is the benchmark.
+
+```bash
+make skillcorner    # one match, ~86 MB, CC licensed by SkillCorner
+make benchmark
+```
+
+Over 40,404 frames of one match, that commercial system:
+
+| | Reference (commercial) |
+|---|---|
+| Players reported per frame | 22, always |
+| Players **actually detected** per frame | **13** (mean 11.3) |
+| Detection rate | **51.2%** mean, 59.1% median |
+| Ball **actually seen** | **78.9%** of frames |
+
+Two things follow, and both are about this project's *real footage* results rather than
+its synthetic ones.
+
+First, recovering roughly half to two thirds of the squad from a broadcast frame is what
+the state of the art does. The tighter of the two Premier League clips tested here tracked
+a median of 12 players against roughly 20 visible, which
+[docs/REAL_FOOTAGE.md](docs/REAL_FOOTAGE.md) wrote up as a shortfall and which is in fact
+squarely in the commercial range.
+
+Second, it confirms the ball problem from the other direction. A professional system sees
+the ball in four frames out of five. This pipeline reporting 100% on real clips was never
+going to be real, and separately turned out not to be.
+
+This is context, not a score, and the tool says so twice in its own output. The reference
+is a different match on footage this repository does not have, so there is no head to head
+here, only a range.
 
 ## The clip, and why it is synthetic
 
