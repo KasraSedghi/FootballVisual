@@ -163,29 +163,122 @@ class AutoCalibration:
         return self.score < 4.0 and self.inlier_fraction > 0.55
 
 
+def _odd(value: float, minimum: int = 3) -> int:
+    """Nearest odd integer at least `minimum`, for morphology kernels."""
+    k = int(round(value))
+    if k % 2 == 0:
+        k += 1
+    return max(minimum, k)
+
+
+def pitch_region(frame: np.ndarray, erode_frac: float = 0.012) -> np.ndarray:
+    """The playing surface: the largest connected patch of grass, pulled in.
+
+    Taking the *largest connected component* rather than all green matters,
+    because a stadium has green in the stands, on advertising, and on kit. And
+    eroding matters even more: the advertising hoardings run directly along the
+    touchline, so a mask that merely asks for white "near grass" accepts the
+    whole boarding as pitch marking. On a real Premier League frame that single
+    difference was the bulk of the problem, with only 0.52% of the frame being
+    white-inside-the-pitch against 4.21% white overall.
+
+    The colour bounds are deliberately loose, and tightening them was tried and
+    reverted. They are loose enough to admit a sky blue crowd under floodlights,
+    which the closing step then bridges into the pitch component, so the returned
+    surface reaches row 0 on every input tested and quietly contains the stands.
+    Tightening to hue 32 to 88 at saturation 40 fixes that cleanly, cutting the
+    surface to 70% of the frame and stopping it at the horizon, and it makes
+    calibration much *worse*: on the demo clip the fit goes from 0.09m to 94m
+    out, because the erosion that follows also pulls the boundary in off the far
+    touchline, and losing that one line costs five of the twenty-two detected
+    lines and the constraint that pins the far side of the pitch.
+
+    So the stands stay in. What keeps them out of the answer is `line_mask`,
+    whose top-hat is unmoved by anything broad, rather than this region. The
+    region's real job is connectivity, which is a reason to prefer it generous.
+    """
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    grass = cv2.inRange(hsv, np.array([25, 25, 25]), np.array([100, 255, 255]))
+
+    # Close small holes so players standing on the grass do not fragment it.
+    height, width = frame.shape[:2]
+    scale = min(height, width)
+    grass = cv2.morphologyEx(grass, cv2.MORPH_CLOSE, np.ones((_odd(scale / 40), _odd(scale / 40)), np.uint8))
+
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(grass, 8)
+    if count <= 1:
+        return np.zeros_like(grass)
+    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    region = (labels == largest).astype(np.uint8) * 255
+
+    erode = _odd(scale * erode_frac)
+    return cv2.erode(region, np.ones((erode, erode), np.uint8))
+
+
 def line_mask(frame: np.ndarray) -> np.ndarray:
     """Binary mask of pitch markings.
 
-    Keyed on "bright and unsaturated, with grass nearby" rather than brightness
-    alone, because the stands, the ball, and the players' kit are all bright too.
-    Requiring green in the neighbourhood is what restricts the mask to paint on
-    grass.
+    Two things make this work on real broadcast rather than only on a clean
+    render, and both were found by running it on a real frame.
+
+    The mask is restricted to the playing surface rather than to anything near
+    grass. Advertising hoardings sit right on the touchline and the score bug
+    sits over the crowd, both bright and unsaturated, so a proximity test lets
+    them straight in and they then dominate the line fitting. Note that
+    `pitch_region` is generous and does leak into the stands, deliberately: see
+    its docstring for why tightening it made calibration far worse. It is the
+    top-hat below, not the region, that keeps the crowd out of the answer.
+
+    Markings are found as *local* brightness, through a white top-hat, rather
+    than by any global threshold on the value channel. This is the difference
+    between working on one clip and working on both. A synthetic render puts its
+    lines at value 231 over grass at 94, so almost any global rule finds them; a
+    floodlit broadcast pitch has mow stripes and a lighting gradient that between
+    them span a wider range than the gap between paint and grass, so a global
+    rule either takes half the pitch or none of it. Two attempts failed here
+    before this one. A high percentile of the surface's brightness lands on lit
+    grass rather than paint on the render (96th percentile is 119, the lines are
+    at 231), and Otsu on the value channel splits floodlit grass into lit and
+    shaded halves instead of grass from paint, taking 77% of a real frame. The
+    top-hat asks the only question that is actually true of a pitch marking on
+    any of these inputs: is this pixel brighter than its own surroundings, on the
+    scale of a painted line.
+
+    Morphology kernels scale with the frame throughout. A structuring element
+    sized for a line at 1280x720 is twice too large at 640x360, which is the
+    resolution real broadcast clips actually arrive at.
     """
+    height, width = frame.shape[:2]
+    scale = min(height, width)
+
+    interior = pitch_region(frame)
+    if not interior.any():
+        return np.zeros((height, width), dtype=np.uint8)
+
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    value = hsv[:, :, 2]
+    inside = interior > 0
 
-    white = cv2.inRange(hsv, np.array([0, 0, 150]), np.array([180, 95, 255]))
-    grass = cv2.inRange(hsv, np.array([25, 30, 25]), np.array([100, 255, 255]))
+    # The structuring element must be comfortably wider than a line and narrower
+    # than the gaps between them, so the response peaks on paint and flattens on
+    # everything broad, including a mow stripe or a floodlight gradient.
+    top_hat = cv2.morphologyEx(
+        value,
+        cv2.MORPH_TOPHAT,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (_odd(scale / 40), _odd(scale / 40))),
+    )
 
-    # Dilate the grass generously and keep only white that sits inside it.
-    near_grass = cv2.dilate(grass, np.ones((25, 25), np.uint8))
-    mask = cv2.bitwise_and(white, near_grass)
+    # Otsu is safe *here*, on the top-hat response, in a way it is not on raw
+    # brightness: the response really is bimodal, near zero on grass and high on
+    # paint, whatever the exposure. The floor stops it from manufacturing a split
+    # in a frame that contains no markings at all, where the response is noise.
+    otsu, _ = cv2.threshold(
+        top_hat[inside].reshape(-1, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    mask = (inside & (top_hat >= max(float(otsu), 12.0))).astype(np.uint8) * 255
 
-    # Pitch markings are thin. Removing anything that survives a large opening
-    # discards broad white regions such as kit, advertising and the sky.
-    broad = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((13, 13), np.uint8))
-    mask = cv2.subtract(mask, broad)
-
-    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    close_k = _odd(scale / 180)
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((close_k, close_k), np.uint8))
 
 
 def _normalise_line(x1: float, y1: float, x2: float, y2: float) -> np.ndarray | None:
