@@ -71,6 +71,23 @@ FINE_SPACING_M = 1.5
 EARLY_EXIT_INLIERS = 0.995
 EARLY_EXIT_SCORE_PX = 1.0
 
+# How much of a detected line must have grass on both sides to be treated as a
+# pitch marking. See `grass_support`.
+#
+# 0.35 rather than something higher, and the reason is the touchline. An
+# interior marking has grass on both sides for essentially its whole length and
+# scores over 90%, but a touchline has grass on one side and the stands on the
+# other wherever the camera sees past it, so it scores far lower than intuition
+# suggests: 42.5% on this project's own render. Cutting at 0.5 discards it, and
+# losing the touchline is precisely what takes the demo clip from 0.09m to tens
+# of metres out, because nothing else pins the far side of the pitch.
+#
+# The lowest scoring true line measured across three clips is 42.5% and the
+# highest scoring hoarding is 30%, so this sits in that gap. It is a narrow gap,
+# which is worth knowing: this filter improves the input to the search, it does
+# not make it robust.
+MIN_GRASS_SUPPORT = 0.35
+
 # Model lines, grouped by which family they belong to.
 #
 # `LINES_CONST_Y` run the length of the pitch (parallel to the touchlines) and
@@ -628,6 +645,75 @@ def _score_homography(
     return float(d.mean()), float((d < 4.0).mean())
 
 
+def grass_support(
+    frame: np.ndarray,
+    line: DetectedLine,
+    offset_frac: float = 1.0 / 120.0,
+    samples: int = 40,
+) -> float:
+    """Fraction of a line's length that has grass on *both* sides of it.
+
+    This is the test that separates a pitch marking from a row of advertising
+    hoarding text, and nothing before it was asking the question. `line_mask`
+    asks whether a *pixel* is bright, which text satisfies perfectly. What is
+    true of a marking and not of text is a property of its surroundings rather
+    than of itself: paint is on grass, so stepping perpendicular off a real line
+    lands on grass in both directions. Step off a hoarding and you are still on
+    the hoarding; step off a crowd blob and you are still in the crowd.
+
+    Measured on two real Premier League frames the separation is not marginal.
+    The lines a human would point at score 57% to 100%, and everything else
+    scores under 10%, with a clean gap between. Crucially the *strongest* lines
+    by pixel support, 1042px and 695px, were scoring 0%: they were hoarding text,
+    and because the search ranks candidates by support they were the ones
+    dominating the fit and putting the pitch in a corner of the frame.
+
+    The offset scales with the frame, since six pixels either side of a line is
+    a sensible step at 720p and steps clean over a player's leg at 360p.
+    """
+    height, width = frame.shape[:2]
+    offset = max(3, int(round(min(height, width) * offset_frac)))
+
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    hue = hsv[:, :, 0].astype(np.int16)
+    saturation = hsv[:, :, 1].astype(np.int16)
+    value = hsv[:, :, 2].astype(np.int16)
+    # Stricter than `pitch_region`'s bounds on purpose. That one is deliberately
+    # generous because its job is connectivity; this one is a discriminator, so
+    # admitting a sky blue crowd would defeat the entire point.
+    is_grass = (hue >= 32) & (hue <= 90) & (saturation >= 50) & (value >= 30)
+
+    a, b, c = line.coeffs
+    along = np.array([-b, a], dtype=np.float64)
+    normal = np.array([a, b], dtype=np.float64)
+    origin = -c * normal
+
+    span = float(max(height, width))
+    t = np.linspace(-span, span, samples * 6)
+    points = origin[None, :] + t[:, None] * along[None, :]
+
+    on_screen = (
+        (points[:, 0] >= offset)
+        & (points[:, 0] < width - offset)
+        & (points[:, 1] >= offset)
+        & (points[:, 1] < height - offset)
+    )
+    points = points[on_screen]
+    if len(points) < 8:
+        return 0.0
+
+    chosen = points[np.linspace(0, len(points) - 1, min(samples, len(points))).astype(int)]
+
+    both = np.ones(len(chosen), dtype=bool)
+    for sign in (-1.0, 1.0):
+        probe = chosen + sign * offset * normal[None, :]
+        xs = np.clip(probe[:, 0].astype(np.int32), 0, width - 1)
+        ys = np.clip(probe[:, 1].astype(np.int32), 0, height - 1)
+        both &= is_grass[ys, xs]
+
+    return float(both.mean())
+
+
 def _explained_fraction(
     h: np.ndarray, mask: np.ndarray, width: int, height: int, tolerance_px: int = 6
 ) -> float:
@@ -744,6 +830,20 @@ def calibrate_auto(
 
     mask = line_mask(frame)
     lines = extract_lines(mask)
+
+    # Drop anything that is not paint on grass before the search ever sees it.
+    # A wrong line here is worse than a missing one, because the search ranks
+    # candidates by pixel support and hoarding text is both long and bright, so
+    # it outranks the markings it is competing with. Filtering after the fact
+    # cannot undo that; the hypothesis was already built from the wrong lines.
+    on_grass = [line for line in lines if grass_support(frame, line) >= MIN_GRASS_SUPPORT]
+    # Declining to filter is better than filtering everything away. A pitch this
+    # rule does not recognise as green, in unusual light or on an artificial
+    # surface, would otherwise make calibration impossible rather than merely
+    # harder, and the confidence gate downstream already catches a bad fit.
+    if len(on_grass) >= 4:
+        lines = on_grass
+
     if len(lines) < 4:
         return None
 

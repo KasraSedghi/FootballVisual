@@ -12,8 +12,12 @@ import numpy as np
 import pytest
 
 from footballvisual import pitch
+import cv2
+
 from footballvisual.autocalibrate import (
+    MIN_GRASS_SUPPORT,
     _explained_fraction,
+    grass_support,
     _rotate180,
     calibrate_auto,
     extract_lines,
@@ -330,3 +334,69 @@ def test_declines_on_a_frame_with_no_pitch():
 def test_rejects_an_invalid_camera_side():
     with pytest.raises(ValueError, match="camera_side"):
         calibrate_auto(np.zeros((720, 1280, 3), dtype=np.uint8), camera_side="sideways")
+
+
+def test_grass_support_separates_a_marking_from_a_hoarding():
+    """A pitch marking has grass beside it; advertising text does not.
+
+    This is the property `line_mask` cannot see. It asks whether a pixel is
+    bright, and hoarding text answers yes as convincingly as paint does, then
+    outranks real markings in the search because a row of text is long and
+    high contrast. Measured on real broadcast frames the strongest lines by
+    pixel support were hoardings scoring zero here.
+    """
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    frame[:, :] = (40, 110, 45)  # grass everywhere
+    # A marking across the middle of the grass.
+    cv2.line(frame, (0, 180), (639, 180), (245, 245, 245), 3)
+    # A "hoarding": a dark band with bright text-like marks inside it.
+    frame[300:340, :] = (60, 55, 50)
+    cv2.line(frame, (0, 320), (639, 320), (245, 245, 245), 3)
+
+    lines = extract_lines(line_mask(frame))
+    assert lines, "expected to detect at least the marking"
+
+    scored = sorted(
+        ((grass_support(frame, l), l) for l in lines), key=lambda t: -t[0]
+    )
+    best = scored[0][0]
+    assert best > 0.8, f"the marking on grass should score high, got {best:.2f}"
+
+    # Any line found inside the hoarding band must score far lower. Identify it
+    # by where it sits vertically rather than by assuming the detector found it.
+    for score, line in scored:
+        # y at the frame centre, from a*x + b*y + c = 0.
+        a, b, c = line.coeffs
+        if abs(b) < 1e-6:
+            continue
+        y = -(a * 320.0 + c) / b
+        if 300 <= y <= 340:
+            assert score < MIN_GRASS_SUPPORT, (
+                f"a line inside the hoarding scored {score:.2f}, above the cut"
+            )
+
+
+def test_the_touchline_survives_the_grass_filter():
+    """Regression: the filter must not discard the line with stands beyond it.
+
+    An interior marking has grass on both sides and scores over 90%. A touchline
+    has grass on one side only wherever the camera sees past it, and scores far
+    lower than intuition suggests. Setting the cut at 0.5 discarded it and took
+    the demo clip from 0.09m to 75m out, because nothing else pins the far side
+    of the pitch. This pins the threshold against that.
+    """
+    camera = a_camera()
+    frame = render_full_frame(camera)
+
+    result = calibrate_auto(frame, camera_side="minus_y")
+    assert result is not None, "the grass filter must not starve the search"
+    assert result.is_confident
+
+    candidates = [result.h]
+    if result.h_rotated is not None:
+        candidates.append(result.h_rotated)
+    errors = [
+        pitch_error(h, camera.H, image_size=(camera.width, camera.height))[0]
+        for h in candidates
+    ]
+    assert min(errors) < 1.0, f"best candidate was {min(errors):.2f}m out"
