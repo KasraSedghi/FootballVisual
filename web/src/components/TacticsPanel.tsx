@@ -16,7 +16,24 @@ interface Props {
   report: TacticalReport | null;
   selectedLaneId: number | null;
   onSelectLane: (id: number | null) => void;
+  /**
+   * Show every measurement rather than just the passing options.
+   *
+   * The default is off. This panel can render four sections of numbers at once,
+   * and on a first look that reads as a wall rather than an answer. The
+   * question the tool exists to answer is which lane is open, so that section
+   * stands alone until the analyst asks for the rest.
+   */
+  detailed?: boolean;
 }
+
+/**
+ * How many passing options to list before collapsing the rest.
+ *
+ * A carrier can have a dozen team mates, and ranking them is the point, so the
+ * tail is nearly always noise. Three is what fits in a glance.
+ */
+const FOCUS_LANES = 3;
 
 const VERDICT_STYLE: Record<string, string> = {
   open: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10",
@@ -24,7 +41,12 @@ const VERDICT_STYLE: Record<string, string> = {
   blocked: "text-slate-400 border-slate-600/40 bg-slate-600/10",
 };
 
-export default function TacticsPanel({ report, selectedLaneId, onSelectLane }: Props) {
+export default function TacticsPanel({
+  report,
+  selectedLaneId,
+  onSelectLane,
+  detailed = false,
+}: Props) {
   if (!report) {
     return (
       <div className="rounded-lg border border-white/10 bg-slate-900/50 p-4 text-sm text-slate-400">
@@ -34,6 +56,8 @@ export default function TacticsPanel({ report, selectedLaneId, onSelectLane }: P
   }
 
   const { block, lanes, space } = report;
+  const shownLanes = detailed ? lanes.slice(0, 7) : lanes.slice(0, FOCUS_LANES);
+  const hiddenLanes = lanes.length - shownLanes.length;
 
   return (
     <div className="space-y-4">
@@ -47,7 +71,7 @@ export default function TacticsPanel({ report, selectedLaneId, onSelectLane }: P
           </p>
         ) : (
           <ul className="space-y-1.5">
-            {lanes.slice(0, 7).map((lane) => {
+            {shownLanes.map((lane) => {
               const isSelected = selectedLaneId === lane.targetId;
               return (
                 <li key={lane.targetId}>
@@ -91,9 +115,15 @@ export default function TacticsPanel({ report, selectedLaneId, onSelectLane }: P
             })}
           </ul>
         )}
+        {hiddenLanes > 0 && (
+          <p className="mt-2 text-[11px] text-slate-500">
+            {hiddenLanes} lower ranked option{hiddenLanes > 1 ? "s" : ""} hidden. Use
+            &ldquo;All measurements&rdquo; to see them.
+          </p>
+        )}
       </section>
 
-      {block && (
+      {detailed && block && (
         <section className="rounded-lg border border-white/10 bg-slate-900/50 p-4">
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             {teamLabel(report.defendingTeam)} block
@@ -113,7 +143,7 @@ export default function TacticsPanel({ report, selectedLaneId, onSelectLane }: P
         </section>
       )}
 
-      {space && (
+      {detailed && space && (
         <section className="rounded-lg border border-white/10 bg-slate-900/50 p-4">
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             Space control
@@ -139,7 +169,9 @@ export default function TacticsPanel({ report, selectedLaneId, onSelectLane }: P
         </section>
       )}
 
-      {(report.playersBetweenLines.length > 0 || report.playersBeyondLine.length > 0) && (
+      {detailed &&
+        (report.playersBetweenLines.length > 0 ||
+          report.playersBeyondLine.length > 0) && (
         <section className="rounded-lg border border-white/10 bg-slate-900/50 p-4 text-xs">
           {report.playersBetweenLines.length > 0 && (
             <p className="text-emerald-400">

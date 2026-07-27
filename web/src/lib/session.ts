@@ -69,6 +69,38 @@ export async function loadTracks(url: string): Promise<LoadedSession> {
   return buildSession(data);
 }
 
+/**
+ * Build a session from a `tracks.json` the user picked off their own disk.
+ *
+ * The shape is validated before anything is built, because the failure this
+ * guards against is not a corrupt file, it is the *wrong* file. Handing this a
+ * `ground_truth.json`, which sits in the same directory and looks similar at a
+ * glance, would otherwise produce an empty pitch and no explanation.
+ */
+export async function loadTracksFromFile(file: File): Promise<LoadedSession> {
+  let data: TracksFile;
+  try {
+    data = JSON.parse(await file.text()) as TracksFile;
+  } catch {
+    throw new Error(`${file.name} is not valid JSON.`);
+  }
+
+  if (!data || typeof data !== "object" || !Array.isArray(data.frames)) {
+    throw new Error(
+      `${file.name} has no "frames" array, so it is not a tracks.json. ` +
+        `The pipeline writes one with "make demo" or the track command.`,
+    );
+  }
+  if (!data.frames.length) {
+    throw new Error(`${file.name} contains no frames.`);
+  }
+  if (!data.meta?.fps) {
+    throw new Error(`${file.name} has no meta.fps, so playback cannot be timed.`);
+  }
+
+  return buildSession(data);
+}
+
 export function buildSession(data: TracksFile): LoadedSession {
   const snapshots: Snapshot[] = data.frames.map((f) => ({
     frame: f.frame,

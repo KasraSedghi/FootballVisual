@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AgentPanel from "@/components/AgentPanel";
+import ClipLoader from "@/components/ClipLoader";
 import PitchView, { type PitchTool } from "@/components/PitchView";
 import TacticsPanel from "@/components/TacticsPanel";
 import {
@@ -30,6 +31,19 @@ import { analyseSnapshot, type TacticalReport } from "@/lib/tactics";
 
 const TRACKS_URL = "/data/tracks.json";
 
+/**
+ * Playback speeds, defaulting to half.
+ *
+ * Real time is the wrong default for this tool. Twenty two dots moving at match
+ * pace on a 105 by 68 metre map is genuinely hard to read: a passing lane opens
+ * and closes inside a few frames, and the thing the analyst is here to watch is
+ * gone before they have found it. Coaches step through video slowly for exactly
+ * this reason. Full speed stays available, it just is not what the tool opens
+ * on.
+ */
+const SPEEDS = [0.25, 0.5, 1] as const;
+type Speed = (typeof SPEEDS)[number];
+
 export default function SandboxPage() {
   const [session, setSession] = useState<LoadedSession | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -39,9 +53,19 @@ export default function SandboxPage() {
   const [overrides, setOverrides] = useState<Map<number, DragOverride>>(new Map());
   const [arrows, setArrows] = useState<Arrow[]>([]);
   const [selectedLane, setSelectedLane] = useState<number | null>(null);
-  const [showSpace, setShowSpace] = useState(true);
+  // Space control is the heaviest overlay, a shaded field over the whole pitch,
+  // and it competes with the lanes drawn on top of it. Off by default; the
+  // analyst turns it on when that is the question they are asking.
+  const [showSpace, setShowSpace] = useState(false);
   const [showLanes, setShowLanes] = useState(true);
   const [showShape, setShowShape] = useState(true);
+  const [speed, setSpeed] = useState<Speed>(0.5);
+  // Focus mode shows the three best passing options and nothing else. Every
+  // measurement is still one click away in Detail, but opening on all of them
+  // at once buries the answer to the question the tool is actually for.
+  const [detailed, setDetailed] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [clipName, setClipName] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -73,7 +97,7 @@ export default function SandboxPage() {
 
     const step = (now: number) => {
       const elapsed = now - lastTickRef.current;
-      const frameMs = 1000 / fps;
+      const frameMs = 1000 / (fps * speed);
       if (elapsed >= frameMs) {
         const advance = Math.floor(elapsed / frameMs);
         lastTickRef.current += advance * frameMs;
@@ -93,7 +117,14 @@ export default function SandboxPage() {
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
-  }, [playing, frameCount, fps]);
+  }, [playing, frameCount, fps, speed]);
+
+  // The video has to be slowed by the same factor, or the two panes drift apart
+  // and the seek correction below fights the playback rate every frame.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.playbackRate = speed;
+  }, [speed, videoUrl]);
 
   // Keep the broadcast video aligned with the map. Only corrected when it has
   // drifted more than a couple of frames, because assigning currentTime every
@@ -161,6 +192,23 @@ export default function SandboxPage() {
     setSelectedLane(null);
   }, []);
 
+  const handleLoadClip = useCallback(
+    (loaded: LoadedSession, url: string | null, name: string) => {
+      // Everything derived from the old clip has to go, or a drag meant for
+      // player 7 in one match silently moves player 7 in the next.
+      setPlaying(false);
+      setOverrides(new Map());
+      setArrows([]);
+      setSelectedLane(null);
+      setSession(loaded);
+      setVideoUrl(url);
+      setClipName(name);
+      const first = loaded.snapshots.findIndex((s) => s.players.length >= 8);
+      setIndex(first >= 0 ? first : 0);
+    },
+    [],
+  );
+
   const paused = !playing;
   const edited = overrides.size > 0;
   const evaluation = session?.meta.stats?.evaluation as
@@ -195,18 +243,22 @@ export default function SandboxPage() {
             planar homography. Pause to drag players and re-run the analysis.
           </p>
         </div>
-        {session && (
-          <div className="text-right text-[11px] text-slate-500">
-            <div>
-              {session.tracks.length} tracks · {frameCount} frames · {fps.toFixed(0)} fps
-            </div>
-            {evaluation && (
-              <div className="text-slate-600">
-                position MAE {evaluation.positionMaeM} m vs ground truth
+        <div className="flex items-start gap-3">
+          {session && (
+            <div className="text-right text-[11px] text-slate-500">
+              <div>
+                {session.tracks.length} tracks · {frameCount} frames ·{" "}
+                {fps.toFixed(0)} fps
               </div>
-            )}
-          </div>
-        )}
+              {evaluation && (
+                <div className="text-slate-600">
+                  position MAE {evaluation.positionMaeM} m vs ground truth
+                </div>
+              )}
+            </div>
+          )}
+          <ClipLoader onLoad={handleLoadClip} currentName={clipName} />
+        </div>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
@@ -219,16 +271,31 @@ export default function SandboxPage() {
                 support for avc1 while playing VP9 happily. Listing both lets
                 each browser take the one it can decode.
               */}
-              <video
-                ref={videoRef}
-                muted
-                playsInline
-                preload="auto"
-                className="w-full"
-              >
-                <source src="/data/broadcast.webm" type="video/webm" />
-                <source src="/data/broadcast.mp4" type="video/mp4" />
-              </video>
+              {videoUrl ? (
+                // `key` forces a fresh element per clip. Swapping `src` on a
+                // <video> that has already loaded leaves the old frames on
+                // screen until the new one buffers.
+                <video
+                  key={videoUrl}
+                  ref={videoRef}
+                  src={videoUrl}
+                  muted
+                  playsInline
+                  preload="auto"
+                  className="w-full"
+                />
+              ) : (
+                <video
+                  ref={videoRef}
+                  muted
+                  playsInline
+                  preload="auto"
+                  className="w-full"
+                >
+                  <source src="/data/broadcast.webm" type="video/webm" />
+                  <source src="/data/broadcast.mp4" type="video/mp4" />
+                </video>
+              )}
               <div className="border-t border-white/10 px-3 py-1.5 text-[11px] text-slate-500">
                 Source broadcast. Detection and tracking run on these pixels.
               </div>
@@ -292,6 +359,51 @@ export default function SandboxPage() {
               </span>
             </div>
 
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-500">Speed</span>
+                {SPEEDS.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSpeed(s)}
+                    className={`rounded px-2 py-0.5 font-mono transition ${
+                      speed === s
+                        ? "bg-slate-200 text-slate-900"
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    }`}
+                  >
+                    {s}x
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlaying(false);
+                    setIndex((i) => Math.max(0, i - 1));
+                  }}
+                  className="rounded bg-slate-800 px-2 py-0.5 text-slate-300 transition hover:bg-slate-700"
+                  aria-label="Previous frame"
+                >
+                  &larr; frame
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlaying(false);
+                    setIndex((i) => Math.min(frameCount - 1, i + 1));
+                  }}
+                  className="rounded bg-slate-800 px-2 py-0.5 text-slate-300 transition hover:bg-slate-700"
+                  aria-label="Next frame"
+                >
+                  frame &rarr;
+                </button>
+              </div>
+            </div>
+
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-white/10 pt-3 text-xs">
               <div className="flex gap-1">
                 {(["select", "arrow"] as const).map((t) => (
@@ -314,6 +426,14 @@ export default function SandboxPage() {
               <Toggle label="Lanes" checked={showLanes} onChange={setShowLanes} />
               <Toggle label="Block shape" checked={showShape} onChange={setShowShape} />
               <Toggle label="Space control" checked={showSpace} onChange={setShowSpace} />
+
+              <button
+                type="button"
+                onClick={() => setDetailed((d) => !d)}
+                className="rounded border border-white/15 bg-slate-800 px-2.5 py-1 text-slate-300 transition hover:bg-slate-700"
+              >
+                {detailed ? "Focus view" : "All measurements"}
+              </button>
 
               {(edited || arrows.length > 0) && (
                 <button
@@ -364,6 +484,7 @@ export default function SandboxPage() {
             report={report}
             selectedLaneId={selectedLane}
             onSelectLane={setSelectedLane}
+            detailed={detailed}
           />
         </aside>
       </div>
