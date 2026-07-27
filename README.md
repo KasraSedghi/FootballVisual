@@ -220,8 +220,16 @@ intersections, and score each candidate by reprojecting the *whole* pitch model 
 distance transform of the detected lines. A wrong assignment explains the four lines it
 was fitted to and then puts the centre circle nowhere, so it scores badly.
 
-Measured against the renderer's known homography, this recovers the camera to **0.05m**
-mean pitch error in about 9 seconds per frame on CPU.
+Measured against the renderer's known homography, this recovers the camera to **0.09m**
+mean pitch error in about 9 seconds per frame on CPU. On real broadcast footage it does not
+work at all yet, which is documented in [docs/REAL_FOOTAGE.md](docs/REAL_FOOTAGE.md).
+
+Scoring runs in both directions, and the second one exists because the first was not
+enough. Reprojecting the model and asking whether it lands on detected line pixels says
+nothing about the detected lines the fit ignored, so a homography that shrinks the pitch
+onto a dense patch of the mask scores 0.85px at a 0.98 inlier fraction while sitting 94
+metres from the truth. `explained_fraction` asks the converse, and separates those cleanly:
+81% for a correct fit against 5% for that one.
 
 ### The symmetry problem, which is not solvable from geometry
 
@@ -266,15 +274,25 @@ homography to settle the rotation ambiguity, rather than propagating across the 
   encode which end is which. The pipeline resolves it from a prior; a real deployment would
   resolve it from the direction of play or an operator confirming it once at kickoff.
 - **The ball is only tracked in 2D.** Height is not recovered, so a lofted pass is
-  reported at its ground projection.
+  reported at its ground projection. On the two real clips ball tracking appears to fail
+  outright: it reports a position on every frame, and the thing it is following is
+  stationary for half of them on one clip and travels outside the frame on the other.
 - **Goalkeeper and referee separation is positional**, so it needs enough of a trajectory
   to judge. Tracks with under 8 observations are left `unknown` rather than guessed, since
   mislabelling a defender as a keeper would move the offside line.
 - **Not real time.** See the throughput table below. Fine for offline analysis.
-- **Never validated on real broadcast footage.** Every number here is measured on the
-  synthetic clip, which has no shadows, no crowd, no motion blur beyond what is added, and
-  no broadcast graphics. Treat the accuracy figures as characterising the pipeline on a
-  controlled input, not as a claim about real matches.
+- **Automatic calibration does not work on real broadcast yet.** Two real Premier League
+  clips were run through it and neither produces a usable homography: the fit locks onto
+  advertising hoarding text and collapses the pitch into a corner. It is now correctly
+  reported as low confidence rather than accepted, which it was not before those clips
+  were tried. Detection, tracking, team clustering and cut detection all transfer;
+  calibration is the layer that does not. See
+  **[docs/REAL_FOOTAGE.md](docs/REAL_FOOTAGE.md)** for what was measured and the five
+  approaches that were tried and rejected.
+- **Every accuracy number here is measured on the synthetic clip**, which has no shadows,
+  no crowd, no broadcast graphics and no cuts. Treat them as characterising the pipeline
+  on a controlled input, not as a claim about real matches. Nothing in the real-clip work
+  above produced an accuracy figure, because neither clip has ground truth.
 
 ## Throughput
 
@@ -316,10 +334,19 @@ model, and none of those are things this project has measured.
 make test
 ```
 
-20 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
-rejection, end-to-end calibration accuracy in metres) and the tracker. 17 TypeScript tests
-covering the lane solver and scoring.
+40 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
+rejection, end-to-end calibration accuracy in metres), automatic calibration, and the
+tracker. 17 TypeScript tests covering the lane solver and scoring.
 
-The tracker suite includes a regression test for a real bug found during development:
-lost tracks were excluded from association, so an occluded player could never be
-recovered *and* never aged out. Fixing it moved coverage from 43% to 76%.
+Two of these pin real bugs found during development, which is most of the reason to have
+them:
+
+- Lost tracks were excluded from association, so an occluded player could never be
+  recovered *and* never aged out. Fixing it moved coverage from 43% to 76%.
+- Calibration scoring was one-sided, and accepted a fit 94 metres from the truth as
+  confident.
+
+The calibration suite also carries a note about its own limits. Every test in it used to
+calibrate a frame of flat grass and clean lines, and a change that put the demo clip 79
+metres out left all of them green. There is now a test against a fully rendered frame, and
+its docstring says plainly that this was still not what caught the bug.

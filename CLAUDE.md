@@ -50,6 +50,33 @@ lines that are parallel on the grass span tens of degrees in the image, with mem
 the other family sitting between them, so an angle split fails on exactly the wide views
 where calibration matters.
 
+## Calibration is scored in both directions, and that is not optional
+
+`_score_homography` asks whether the reprojected model lands on detected line pixels.
+`_explained_fraction` asks whether the detected lines are explained by the fitted pitch.
+Only the second notices a homography that has shrunk the pitch onto a dense patch of the
+mask, which scores 0.85px at a 0.98 inlier fraction while being 94 metres wrong. Do not
+drop the second term, and do not tune its threshold up toward the values a correct fit
+achieves: it sits at 0.35 against 0.81 for correct fits precisely so it rejects nonsense
+without becoming brittle.
+
+`_explained_fraction` runs once on the winning fit, never per hypothesis. It dilates over
+the whole frame, so putting it in the search loop would cost far more than it is worth,
+and it is a check on an answer rather than a way to find one.
+
+## Real footage: calibration does not work there yet
+
+Two real Premier League clips were run through the pipeline. Detection, tracking, team
+clustering and cut detection all transfer; automatic calibration does not, on either clip.
+The fit locks onto advertising hoarding text. Read `docs/REAL_FOOTAGE.md` before trying to
+fix it: five approaches were tried and measured, and the recurring trap is that everything
+which helps the real clips hurts the demo clip. Anything that removes the top of
+`pitch_region`, whether erosion, tighter colour bounds, or a horizon cut, costs the far
+touchline and takes the demo clip to the same 93.8m every time.
+
+The remaining idea, not attempted, is filtering detected *lines* by whether they are
+plausibly pitch markings rather than filtering mask pixels.
+
 ## Non-obvious decisions, and why
 
 Changing any of these without understanding the reason will regress something measurable.
@@ -136,6 +163,14 @@ make test-web    # vitest, in web/
 
 The Python tests need no network and no model weights. The TypeScript tests cover the
 tactical engine only, which is where the correctness risk is.
+
+**A green `test_autocalibrate.py` is weaker evidence than it looks.** Every test in it once
+calibrated `render_lines_only`, flat grass and clean lines, and a `line_mask` change that
+put the demo clip 79 metres out left all eight passing. There is now a
+`render_full_frame` test with mow stripes, blur and grain, and that one still did not catch
+it. If you change anything in `line_mask` or `pitch_region`, calibrate `data/broadcast.mp4`
+frame 0 against `data/ground_truth.json` directly and check the error in metres. The suite
+alone will not tell you.
 
 When you change anything in the pipeline, re-run `make demo` and compare the printed
 accuracy block against the numbers in `README.md`. Those numbers are a claim the repo
