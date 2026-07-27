@@ -9,16 +9,43 @@ to pose a different shape, draw movement arrows, and the tactical analysis recom
 instantly, including the answer to the question this project was built around, *where is
 the open passing lane?*
 
+```mermaid
+flowchart TB
+    V["broadcast video"] --> D["detection<br/>YOLOv8, tiled"]
+    D --> T["tracking<br/>ByteTrack"]
+    D --> C["calibration<br/>markings to homography"]
+    T --> P["projection<br/>foot point through H"]
+    C --> P
+    P --> J[("tracks.json<br/>pitch metres")]
+
+    J --> E["deterministic tactical engine<br/><i>every number is computed here</i>"]
+
+    E --> L["lanes<br/>interception race"]
+    E --> S["shape<br/>block, gaps, offside"]
+    E --> SP["space<br/>time to arrive"]
+
+    L --> API{{"the model layer"}}
+    S --> API
+    SP --> API
+
+    API --> A1["narrate<br/>one frame to prose"]
+    API --> A2["search<br/>question to a query"]
+    API --> A3["scout<br/>multi-step investigation"]
+
+    style E fill:#1a3d1a,stroke:#4a4,color:#dfd
+    style API fill:#3d2a1a,stroke:#a74,color:#fda
+    style J fill:#1a2a3d,stroke:#47a,color:#def
 ```
-broadcast video ──▶ detection ──▶ tracking ──▶ homography ──▶ pitch coordinates
-                    (YOLOv8)      (ByteTrack)   (DLT+RANSAC)         │
-                                                                     ▼
-                                        interactive sandbox ◀── tracks.json
-                                                 │
-                                     deterministic tactical engine
-                                                 │
-                                     Claude narrates the numbers
-```
+
+**The line through the middle is the whole design.** Everything above the engine is
+measurement. Everything below it is language. The three model-facing surfaces differ only
+in how much autonomy they get, and none of them is allowed to compute a number:
+
+| Surface | The model's job | What it cannot do |
+|---|---|---|
+| `analyse` | Turn computed facts into a coach's sentence | See a coordinate, or pick which lane is open |
+| `search` | Turn a question into a threshold query | Decide whether a frame matches |
+| `scout` | Choose what to investigate, and in what order | Measure anything; every tool calls the engine |
 
 ## Quick start
 
@@ -120,7 +147,43 @@ second moment is fifty near-identical hits and a player lost for two frames is d
 flicker rather than a new moment. With no API key a heuristic parser handles the common
 phrasings, and the response says which path produced the query.
 
-### 7. The analyst (`web/src/app/api/analyse/route.ts`)
+### 7. The scout (`web/src/app/api/scout/route.ts`)
+
+`analyse` handles one frame and `search` handles one query. Neither can answer *"how did
+they create their chances?"*, because that takes several searches, a look at what each
+returned, and a decision about what to look at next. That is an agent loop, so it is one.
+
+```mermaid
+sequenceDiagram
+    participant U as analyst
+    participant M as Claude
+    participant E as tactical engine
+
+    U->>M: "how did they break the block?"
+    M->>E: clip_summary()
+    E-->>M: 250 frames, block 28m to 51m wide
+    Note over M: block varies a lot,<br/>look at the wide moments
+    M->>E: search_moments(minBlockWidthM: 45)
+    E-->>M: 3 passages + measurements
+    M->>E: inspect_frame(112), inspect_frame(180)
+    E-->>M: lanes, margins, gaps
+    Note over M: same pattern twice,<br/>enough to report
+    M-->>U: findings, each citing frames
+```
+
+**The model never measures anything.** Every tool is a call into the engine, so it chooses
+*which* questions to ask and in what order while the numbers stay computed. The response
+carries the full tool transcript, so any finding can be traced to the measurement behind it
+rather than taken on trust.
+
+Two deliberate constraints: tools are withheld on the final turn, so the loop cannot end
+with the model asking for a search it will never get, and there is **no deterministic
+fallback**. The other two routes degrade gracefully because their work is phrasing and
+pattern matching. Deciding what to investigate next based on what the last search returned
+is the part a model actually does, and a canned sequence of searches pretending to be an
+investigation would be worse than saying plainly that this one needs a key.
+
+### 8. The analyst (`web/src/app/api/analyse/route.ts`)
 
 Every tactical *fact* is computed before the model is involved. Claude receives the
 numbers and turns them into the sentence a coach would say. It never sees raw
@@ -410,10 +473,15 @@ model, and none of those are things this project has measured.
 make test
 ```
 
-49 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
+52 Python tests covering the homography (exact fit, degenerate inputs, RANSAC outlier
 rejection, end-to-end calibration accuracy in metres), automatic calibration, the tracker,
-and the comparison to professional tracking. 40 TypeScript tests covering the lane solver,
-scoring, and clip retrieval.
+and the comparison to professional tracking. 63 TypeScript tests covering the lane solver,
+scoring, clip retrieval, and the scout's agent loop.
+
+The scout's loop is tested against a scripted model rather than a live one, so the suite
+still needs no API key. What that pins is the plumbing that fails silently: that tool
+results are actually executed and fed back, that parallel calls return in a single message
+(splitting them trains the model out of requesting them), and that the loop terminates.
 
 Two of these pin real bugs found during development, which is most of the reason to have
 them:
