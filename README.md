@@ -24,6 +24,10 @@ flowchart TB
     E --> S["shape<br/>block, gaps, offside"]
     E --> SP["space<br/>time to arrive"]
 
+    L --> EM["embed<br/>canonicalise, then vectorise"]
+    S --> EM
+    EM --> NN["nearest neighbour<br/><i>moments like this one</i>"]
+
     L --> API{{"the model layer"}}
     S --> API
     SP --> API
@@ -33,6 +37,8 @@ flowchart TB
     API --> A3["scout<br/>multi-step investigation"]
 
     style E fill:#1a3d1a,stroke:#4a4,color:#dfd
+    style EM fill:#1a3d1a,stroke:#4a4,color:#dfd
+    style NN fill:#1a3d1a,stroke:#4a4,color:#dfd
     style API fill:#3d2a1a,stroke:#a74,color:#fda
     style J fill:#1a2a3d,stroke:#47a,color:#def
 ```
@@ -46,6 +52,10 @@ in how much autonomy they get, and none of them is allowed to compute a number:
 | `analyse` | Turn computed facts into a coach's sentence | See a coordinate, or pick which lane is open |
 | `search` | Turn a question into a threshold query | Decide whether a frame matches |
 | `scout` | Choose what to investigate, and in what order | Measure anything; every tool calls the engine |
+
+Similarity retrieval sits on the measurement side of that line entirely, with no model in
+it at all. It is the one place where the answer is a shape rather than a sentence, and a
+shape can be compared arithmetically.
 
 ## Quick start
 
@@ -147,7 +157,32 @@ second moment is fifty near-identical hits and a player lost for two frames is d
 flicker rather than a new moment. With no API key a heuristic parser handles the common
 phrasings, and the response says which path produced the query.
 
-### 7. The scout (`web/src/app/api/scout/route.ts`)
+### 7. Similarity retrieval (`web/src/lib/tactics/embedding.ts`)
+
+Threshold search answers a question you already know how to ask. An analyst watching a
+clip usually has the opposite problem: there is a shape on screen, it obviously matters,
+and naming the three numbers that would find it again is the hard part. So each frame
+maps to a vector, and *"moments like this one"* becomes nearest neighbour.
+
+The step that makes it work is **canonicalisation**, and it is geometric rather than
+learned. The same situation played toward the other goal, or down the other wing, is the
+same situation, and raw coordinates say otherwise: a build-up on the left at one end and
+its mirror at the other end share almost no numbers. Two reflections fix it, x so the team
+in possession always attacks toward +x, and y so the ball is always in the +y half.
+Reflection is an isometry, so it cannot distort the shape it is about to measure, only
+relabel where that shape sits. `embedding.test.ts` pins both directions: mirrored ends and
+mirrored wings each embed above 0.97 similarity, while a stretched block falls below it.
+
+The vector itself is handcrafted, a coarse occupancy grid per team plus the tactical
+scalars the engine already computed, and that is a deliberate limit rather than a
+placeholder. A learned representation needs thousands of match hours; ten matches of open
+tracking data cannot produce one. Everything around the representation is the real thing,
+and swapping in a learned vector later changes `embedFrame` and nothing else.
+
+Results are spaced at least 25 frames apart. The true nearest neighbours of frame 120 are
+frames 119 and 121, which are the same moment and tell an analyst nothing.
+
+### 8. The scout (`web/src/app/api/scout/route.ts`)
 
 `analyse` handles one frame and `search` handles one query. Neither can answer *"how did
 they create their chances?"*, because that takes several searches, a look at what each
@@ -183,7 +218,7 @@ pattern matching. Deciding what to investigate next based on what the last searc
 is the part a model actually does, and a canned sequence of searches pretending to be an
 investigation would be worse than saying plainly that this one needs a key.
 
-### 8. The analyst (`web/src/app/api/analyse/route.ts`)
+### 9. The analyst (`web/src/app/api/analyse/route.ts`)
 
 Every tactical *fact* is computed before the model is involved. Claude receives the
 numbers and turns them into the sentence a coach would say. It never sees raw

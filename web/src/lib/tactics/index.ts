@@ -140,6 +140,7 @@ export function analyseSnapshot(
     attackingTeam: attacking,
     defendingTeam: defending,
     carrierId: carrier?.id ?? null,
+    attackingGoalX: goalX,
     lanes,
     block,
     attackingShape,

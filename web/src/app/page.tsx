@@ -500,6 +500,7 @@ export default function SandboxPage() {
         >
           <SearchPanel
             session={session}
+            currentIndex={index}
             onSeek={(i) => {
               setPlaying(false);
               setIndex(i);

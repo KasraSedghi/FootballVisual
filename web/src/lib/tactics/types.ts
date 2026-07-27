@@ -147,6 +147,14 @@ export interface TacticalReport {
   attackingTeam: TeamId;
   defendingTeam: TeamId;
   carrierId: number | null;
+  /**
+   * Pitch x of the goal the team in possession is attacking.
+   *
+   * Exposed because anything reading the report needs the direction of play,
+   * and re-deriving it would let a consumer disagree with the engine about
+   * which way the game is going. The embedding's canonicalisation depends on it.
+   */
+  attackingGoalX: number;
   lanes: PassingLane[];
   block: BlockShape | null;
   attackingShape: BlockShape | null;

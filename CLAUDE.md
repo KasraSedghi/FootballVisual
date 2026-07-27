@@ -35,6 +35,32 @@ which does not have the property asked for is worse than no retrieval tool. The 
 fallback in the same route must stay genuinely useful, not a stub: it is what runs when
 no `ANTHROPIC_API_KEY` is set, which is the default.
 
+## Similarity retrieval has no model in it, and that is the point
+
+`web/src/lib/tactics/embedding.ts` maps a frame to a vector so "moments like this one"
+works without anyone naming a threshold. It runs entirely in the browser and never calls
+Claude. Do not add a model to it: a shape is a thing you can compare arithmetically, and
+the moment a model chooses which frames are similar, the result stops being reproducible.
+
+`canonicalise` is the load-bearing part. It reflects x so the team in possession attacks
+toward +x, and y so the ball sits in the +y half, which is what makes the same situation
+at the other end or down the other wing match. Reflection is an isometry, so it cannot
+distort the shape being measured. If you replace it with a rotation or a rescale, that
+stops being true and every embedding measures a warped frame.
+
+`attackingGoalX` on `TacticalReport` exists solely so the embedding takes direction of
+play from the engine rather than recomputing it. Keep it that way, or the two can disagree
+about which way a team is playing and the canonicalisation silently inverts.
+
+The vector is handcrafted (a coarse occupancy grid per team plus the engine's scalars)
+because ten matches of open tracking data cannot train a learned representation. That is a
+documented limit, not a TODO to paper over. If a learned encoder ever becomes available,
+it replaces `embedFrame` and nothing else.
+
+Both equivariances and the negative case are pinned in `embedding.test.ts`. A change that
+makes everything similar passes the first two tests and is worthless, which is what the
+compact-versus-stretched test is there to catch.
+
 ## The three symmetries of a pitch
 
 Automatic calibration (`autocalibrate.py`) exists now, and the thing to understand before

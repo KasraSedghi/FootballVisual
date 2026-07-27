@@ -22,11 +22,52 @@ import {
   type SearchSequence,
   type TacticalQuery,
 } from "@/lib/tactics/search";
+import {
+  embedFrame,
+  findSimilar,
+  type FrameEmbedding,
+  type SimilarFrame,
+} from "@/lib/tactics/embedding";
+import { analyseSnapshot, type TacticalReport } from "@/lib/tactics";
 import { formatTime, type LoadedSession } from "@/lib/session";
 
 interface Props {
   session: LoadedSession | null;
   onSeek: (index: number) => void;
+  /** The frame currently on screen, used as the query for "like this". */
+  currentIndex: number;
+}
+
+/**
+ * The measurements shown beside a similarity score.
+ *
+ * A cosine similarity on its own is unfalsifiable to the person reading it. The
+ * rest of this app shows the number behind every claim, so a match has to be
+ * checkable the same way: if a frame is returned as similar, the analyst should
+ * be able to see that its shape numbers really are close to the query's.
+ */
+interface FrameFacts {
+  openLanes: number;
+  gapM: number | null;
+  widthM: number | null;
+  betweenLines: number;
+}
+
+function factsOf(report: TacticalReport): FrameFacts {
+  return {
+    openLanes: report.lanes.filter((l) => l.verdict === "open").length,
+    gapM: report.block?.largestBackLineGapM ?? null,
+    widthM: report.block?.widthM ?? null,
+    betweenLines: report.playersBetweenLines.length,
+  };
+}
+
+function describeFacts(f: FrameFacts): string {
+  const parts = [`${f.openLanes} open`];
+  if (f.gapM != null) parts.push(`gap ${f.gapM.toFixed(0)}m`);
+  if (f.widthM != null) parts.push(`width ${f.widthM.toFixed(0)}m`);
+  if (f.betweenLines > 0) parts.push(`${f.betweenLines} between lines`);
+  return parts.join(" · ");
 }
 
 const EXAMPLES = [
@@ -36,13 +77,58 @@ const EXAMPLES = [
   "someone in behind the defence",
 ];
 
-export default function SearchPanel({ session, onSeek }: Props) {
+export default function SearchPanel({ session, onSeek, currentIndex }: Props) {
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<SearchSequence[] | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
+  const [similar, setSimilar] = useState<SimilarFrame[] | null>(null);
+  const [facts, setFacts] = useState<Map<number, FrameFacts>>(new Map());
+  const [queryFacts, setQueryFacts] = useState<FrameFacts | null>(null);
+
+  /**
+   * Embed every frame once, lazily, and keep it.
+   *
+   * A clip is a few hundred frames and each embedding needs a full tactical
+   * report, so this is the expensive part. Doing it on first use rather than on
+   * load keeps the page responsive for the majority of visitors who never ask
+   * for a similarity search.
+   */
+  const findLikeThis = useCallback(() => {
+    if (!session) return;
+    setError(null);
+    setResults(null);
+    setSummary(null);
+
+    const embeddings: FrameEmbedding[] = [];
+    const measured = new Map<number, FrameFacts>();
+    for (let i = 0; i < session.snapshots.length; i += 1) {
+      const report = analyseSnapshot(session.snapshots[i], {
+        previous: i > 0 ? session.snapshots[i - 1] : null,
+        computeSpace: false,
+      });
+      if (!report) continue;
+      embeddings.push({
+        frame: session.snapshots[i].frame,
+        timeS: session.snapshots[i].timeS,
+        index: i,
+        vector: embedFrame(report),
+      });
+      measured.set(i, factsOf(report));
+    }
+
+    const here = embeddings.find((e) => e.index === currentIndex);
+    if (!here) {
+      setError("This frame could not be analysed, so there is nothing to match on.");
+      return;
+    }
+
+    setFacts(measured);
+    setQueryFacts(measured.get(currentIndex) ?? null);
+    setSimilar(findSimilar(here.vector, embeddings, { excludeIndex: currentIndex }));
+  }, [session, currentIndex]);
 
   const run = useCallback(
     async (text: string) => {
@@ -74,6 +160,7 @@ export default function SearchPanel({ session, onSeek }: Props) {
         setResults(sequences);
         setSummary(describeQuery(query));
         setSource(from);
+        setSimilar(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setResults(null);
@@ -113,7 +200,22 @@ export default function SearchPanel({ session, onSeek }: Props) {
         </button>
       </form>
 
-      {!results && !error && (
+      <div className="mt-2 border-b border-white/5 pb-2">
+        <button
+          type="button"
+          onClick={findLikeThis}
+          disabled={!session}
+          className="w-full rounded border border-sky-500/40 bg-sky-500/10 px-2.5 py-1.5 text-[11px] text-sky-300 transition hover:bg-sky-500/20 disabled:opacity-40"
+        >
+          Moments like this frame
+        </button>
+        <p className="mt-1 text-[10px] leading-tight text-slate-600">
+          Shape match rather than a threshold, with mirrored ends and wings
+          treated as the same situation.
+        </p>
+      </div>
+
+      {!results && !error && !similar && (
         <div className="mt-2 flex flex-wrap gap-1">
           {EXAMPLES.map((e) => (
             <button
@@ -196,6 +298,61 @@ export default function SearchPanel({ session, onSeek }: Props) {
             </li>
           ))}
         </ul>
+      )}
+
+      {similar && (
+        <div className="mt-2.5">
+          <p className="text-[11px] leading-relaxed text-slate-500">
+            Frames whose shape most resembles this one. Matching runs on a
+            canonicalised pitch, so the same situation at the other end or down
+            the other wing still counts.
+          </p>
+          {queryFacts && (
+            <p className="mt-1.5 rounded border border-white/5 bg-slate-950/60 px-2 py-1 text-[10px] text-slate-500">
+              This frame:{" "}
+              <span className="text-slate-300">{describeFacts(queryFacts)}</span>
+            </p>
+          )}
+          {similar.length === 0 ? (
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              Nothing else in this clip is far enough away in time to compare
+              against.
+            </p>
+          ) : (
+            <ul className="mt-1.5 space-y-1">
+              {similar.map((m) => (
+                <li key={m.frame}>
+                  <button
+                    type="button"
+                    onClick={() => onSeek(m.index)}
+                    className="w-full rounded border border-white/10 bg-slate-800/50 px-2.5 py-1.5 text-left text-[11px] transition hover:bg-slate-700/60"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-slate-200">
+                        {formatTime(m.timeS)}
+                      </span>
+                      {/*
+                        A number, not a bar. These vectors have no negative
+                        components, so cosine similarity between any two frames
+                        of football sits well above zero and a bar scaled over
+                        [0, 1] renders every result nearly full. Three decimal
+                        places separate them; a bar hides that they differ.
+                      */}
+                      <span className="font-mono text-sky-300">
+                        {m.similarity.toFixed(3)}
+                      </span>
+                    </div>
+                    {facts.has(m.index) && (
+                      <div className="mt-0.5 text-[10px] text-slate-400">
+                        {describeFacts(facts.get(m.index)!)}
+                      </div>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </section>
   );
